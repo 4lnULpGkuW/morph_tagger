@@ -1,4 +1,4 @@
 .venv/
 __pycache__/
-data/model_params.pt
-data/Схема_модели.jpg
+data/
+data/train_states.json

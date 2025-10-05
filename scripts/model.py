@@ -125,12 +125,20 @@ class MHAModel(nn.Module):
         # classifiers_names_params: ожидается словарь, где ключ - название признака, а значение - размерность словаря признака
         super().__init__()
 
-        self.batch_first = batch_first
-        self.padding_idx = padding_idx
-        self.num_layers = num_layers
-        self.temperature = temperature
+        self.max_seq_len = max_seq_len
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
         self.attention_dim = attention_dim
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.dim_classifier_ff_hidden = dim_classifier_ff_hidden
+        self.dim_encoder_ff = dim_encoder_ff
         self.classifiers_names_params = classifiers_names_params
+        self.dropout = dropout
+        self.temperature = temperature
+        self.batch_first = batch_first
+        self.bias = bias
+        self.padding_idx = padding_idx
 
         self.embedings = nn.Embedding(num_embeddings, embedding_dim, padding_idx)
         self.positional_encoding = LearnablePositionalEncoding(embedding_dim, max_seq_len, batch_first)
@@ -144,6 +152,23 @@ class MHAModel(nn.Module):
                 for key, value in classifiers_names_params.items()})
         # self.final_classifiers = nn.ModuleDict({target_name:nn.Linear(attention_dim, target_cls) for target_name, target_cls in classifiers_names_params.items()})
 
+    def get_hyperparams(self)->dict:
+        return {
+            'max_seq_len':self.max_seq_len,
+            'num_embeddings':self.num_embeddings,
+            'embedding_dim':self.embedding_dim,
+            'attention_dim':self.attention_dim,
+            'num_heads':self.num_heads,
+            'num_layers':self.num_layers,
+            'dim_classifier_ff_hidden':self.dim_classifier_ff_hidden,
+            'dim_encoder_ff':self.dim_encoder_ff,
+            'classifiers_names_params':self.classifiers_names_params,
+            'dropout':self.dropout,
+            'temperature':self.temperature,
+            'batch_first':self.batch_first,
+            'bias':self.bias,
+            'padding_idx':self.padding_idx
+        }
 
     def forward(self, x, apply_softmax:bool=False)->dict[str:torch.Tensor]:
         """
