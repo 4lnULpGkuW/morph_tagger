@@ -6,7 +6,7 @@ class Vocabulary:
     
     Внутри хранит два отображения: token->idx и idx->token, а также специальные токены (MASK, UNK, BOS, EOS)
     """
-    def __init__(self, token_to_idx:dict=None, bos_token:str='<BOS>', eos_token:str='<EOS>', mask_token:str='<MASK>', unk_token='<UNK>', add_bos_eos_tokens:bool=True):
+    def __init__(self, token_to_idx:dict=None, bos_token:str='<BOS>', eos_token:str='<EOS>', pad_token:str='<PAD>', mask_token:str='<MASK>', unk_token='<UNK>', add_bos_eos_tokens:bool=True):
         """
         Инициализирует словарь.
 
@@ -18,8 +18,10 @@ class Vocabulary:
             Токен начала предложения.
         eos_token : str, default '<EOS>'
             Токен окончания предложения.
+        pad_token : str, default '<PAD>'
+            Токен паддинга для заполнения недостающих позиций.
         mask_token : str, default '<MASK>'
-            Токен маскировки для заполнения недостающих позиций.
+            Токен маскировки.
         unk_token : str, default '<UNK>'
             Токен неизвестного слова.
         add_bos_eos_tokens : bool, default True
@@ -28,6 +30,7 @@ class Vocabulary:
         self.add_bos_eos_tokens = add_bos_eos_tokens
         self.bos_token = bos_token
         self.eos_token = eos_token
+        self.pad_token = pad_token
         self.mask_token = mask_token
         self.unk_token = unk_token
 
@@ -37,8 +40,9 @@ class Vocabulary:
         else:
             self.token_to_idx = {}
             self.idx_to_token = {}
-            self.mask_idx = self.add_token(mask_token)
+            self.pad_idx = self.add_token(pad_token)
             self.unk_idx = self.add_token(unk_token)
+            self.mask_idx = self.add_token(mask_token)
             if add_bos_eos_tokens:
                 self.bos_idx = self.add_token(bos_token)
                 self.eos_idx = self.add_token(eos_token)
@@ -99,6 +103,7 @@ class Vocabulary:
             'token_to_idx': self.token_to_idx,
             'bos_token': self.bos_token,
             'eos_token': self.eos_token,
+            'pad_token': self.pad_token,
             'mask_token': self.mask_token,
             'unk_token': self.unk_token,
             'add_auxiliary_tokens': self.add_bos_eos_tokens}

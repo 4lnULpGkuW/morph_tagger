@@ -4,7 +4,7 @@ import pandas as pd
 from scripts.vocabulary import Vocabulary
 
 class Vectorizer:
-    def __init__(self, src_vocab:Vocabulary, trg_vocabs:dict[str:Vocabulary], max_src_len:int, mask_idx:int):
+    def __init__(self, src_vocab:Vocabulary, trg_vocabs:dict[str:Vocabulary], max_src_len:int, pad_idx:int):
         """
         Инициализирует объект, который преобразует токены в индексы.
 
@@ -16,14 +16,14 @@ class Vectorizer:
             Словари для целевых меток (ключи – названия целей).
         max_src_len : int
             Максимальная длина исходных последовательностей (для обучения).
-        mask_idx : int
+        pad_idx : int
             Индекс маскировочного токена.
         """
         self.max_src_len = max_src_len
         self.src_vocab = src_vocab
         self.target_cnt = len(trg_vocabs)
         self.trg_vocabs = trg_vocabs
-        self.mask_idx = mask_idx
+        self.pad_idx = pad_idx
 
 
     def get_indices(self, tokenized_text:list[str], cw_vocab:Vocabulary, add_bos:bool=True, add_eos:bool=True)->list[int]:
@@ -74,7 +74,7 @@ class Vectorizer:
         else:
             seq_len = len(indices)
         
-        padded = [self.mask_idx] * seq_len # Заполнение индексом маскировочного токена
+        padded = [self.pad_idx] * seq_len # Заполнение индексом маскировочного токена
         padded[:len(indices)] = indices # Заполнение индексами реальных токенов
         return padded
 

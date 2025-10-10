@@ -10,8 +10,8 @@ class LearnablePositionalEncoding(nn.Module):
         embed_dim (int): Размерность эмбеддингов.
         max_seq_len (int): Максимальная длина последовательности.
         batch_first (bool): Указывает порядок батча и временного измерения:
-            * True → [B, N, D]
-            * False → [N, B, D]
+            - True -> [B, N, D]
+            - False -> [N, B, D]
     """
     def __init__(self, embed_dim:int, max_seq_len:int, batch_first:bool):
         super().__init__()
@@ -23,7 +23,7 @@ class LearnablePositionalEncoding(nn.Module):
         Добавляет позиционное кодирование к входному тензору.
 
         Parameters:
-            x (torch.Tensor): Тензор токенов с размером [B, N, D] или [N, B, D]
+            x (torch.Tensor): Тензор токенов с размером [B, S, D] или [S, B, D]
 
         Returns:
             torch.Tensor: Сумма исходного тензора и позиционного эмбеддинга.
@@ -89,14 +89,20 @@ class EncoderBlock(nn.Module):
         query, key, value = (self.query_ff(x), self.key_ff(x), self.value_ff(x))
 
         attention_out, attention_out_weights = self.attention(query, key, value, key_padding_mask=key_padding_mask)
+
+        attention_out = attention_out * (~key_padding_mask).unsqueeze(-1).float()
+
         x = x + self.dropout(attention_out) # residual
         encoder_out = self.encoder_ff(self.norm2(x))
+
+        encoder_out = encoder_out * (~key_padding_mask).unsqueeze(-1).float()
+
         return (x + encoder_out)
 
 
 class MHAModel(nn.Module):
     def __init__(self, max_seq_len:int, num_embeddings:int, embedding_dim:int, attention_dim:int, num_heads:int, num_layers:int, dim_classifier_ff_hidden:int, dim_encoder_ff:int,\
-                 classifiers_names_params:dict[str, int], dropout:float, temperature:float, batch_first:bool, bias:bool=True, padding_idx:int=0):
+                 classifiers_names_params:dict[str, int], dropout:float, temperature:float, batch_first:bool, init_weights:bool=True, bias:bool=True, padding_idx:int=0):
         """
         Модель Multi-Head Attention (MHA) для классификации различных признаков.
         Включает:
@@ -137,20 +143,77 @@ class MHAModel(nn.Module):
         self.dropout = dropout
         self.temperature = temperature
         self.batch_first = batch_first
+        self.init_weights = init_weights
         self.bias = bias
         self.padding_idx = padding_idx
 
         self.embedings = nn.Embedding(num_embeddings, embedding_dim, padding_idx)
         self.positional_encoding = LearnablePositionalEncoding(embedding_dim, max_seq_len, batch_first)
         self.embed_to_encod_proj = nn.Linear(embedding_dim, attention_dim, bias)
-        self.norm1 = nn.LayerNorm(attention_dim)
+        # self.norm1 = nn.LayerNorm(attention_dim)
         self.encoder_stack = nn.ModuleList([EncoderBlock(attention_dim, num_heads, dropout, dim_encoder_ff, bias, batch_first) for _ in range(num_layers)])
-        self.norm2 = nn.LayerNorm(attention_dim)
+        self.norm = nn.LayerNorm(attention_dim)
 
         self.final_classifiers = nn.ModuleDict({key:nn.Sequential(
             nn.Linear(attention_dim, dim_classifier_ff_hidden, bias), nn.ReLU(), nn.Dropout(dropout), nn.Linear(dim_classifier_ff_hidden, value, bias))\
                 for key, value in classifiers_names_params.items()})
         # self.final_classifiers = nn.ModuleDict({target_name:nn.Linear(attention_dim, target_cls) for target_name, target_cls in classifiers_names_params.items()})
+        if init_weights:
+            print('using weights initialisation')
+            self._init_weights()
+
+    def _init_weights(self):
+        """
+        Инициализация весов модели
+        """
+        # Инициализация эмбеддингов
+        nn.init.normal_(self.embedings.weight, mean=0.0, std=0.05)
+        if self.padding_idx is not None:
+            with torch.no_grad():
+                self.embedings.weight[self.padding_idx].fill_(0)
+
+        # Инициализация позиционных эмбеддингов
+        nn.init.normal_(self.positional_encoding.pos_embedings.weight, mean=0.0, std=0.05)
+
+        # Инициализация проекционного слоя
+        nn.init.kaiming_normal_(self.embed_to_encod_proj.weight, nonlinearity='relu')
+        if self.bias:
+            nn.init.constant_(self.embed_to_encod_proj.bias, 0.0)
+
+        # Инициализация энкодеров
+        for encoder in self.encoder_stack:
+            self._init_encoder_weights(encoder)
+
+        # Инициализация классификаторов
+        for classifier in self.final_classifiers.values():
+            self._init_classifier_weights(classifier)
+
+    def _init_encoder_weights(self, encoder):
+        """Инициализация весов энкодера"""
+        # Линейные слои внимания
+        nn.init.kaiming_normal_(encoder.query_ff.weight, nonlinearity='relu')
+        nn.init.kaiming_normal_(encoder.key_ff.weight, nonlinearity='relu')
+        nn.init.kaiming_normal_(encoder.value_ff.weight, nonlinearity='relu')
+        
+        if self.bias:
+            nn.init.constant_(encoder.query_ff.bias, 0.0)
+            nn.init.constant_(encoder.key_ff.bias, 0.0)
+            nn.init.constant_(encoder.value_ff.bias, 0.0)
+
+        # Feed-forward сеть энкодера
+        for layer in encoder.encoder_ff:
+            if isinstance(layer, nn.Linear):
+                nn.init.kaiming_normal_(layer.weight, nonlinearity='relu')
+                if self.bias:
+                    nn.init.constant_(layer.bias, 0.0)
+
+    def _init_classifier_weights(self, classifier):
+        """Инициализация весов классификатора"""
+        for layer in classifier:
+            if isinstance(layer, nn.Linear):
+                nn.init.kaiming_normal_(layer.weight, nonlinearity='relu')
+                if self.bias:
+                    nn.init.constant_(layer.bias, 0.0)
 
     def get_hyperparams(self)->dict:
         return {
@@ -166,6 +229,7 @@ class MHAModel(nn.Module):
             'dropout':self.dropout,
             'temperature':self.temperature,
             'batch_first':self.batch_first,
+            'init_weights':self.init_weights,
             'bias':self.bias,
             'padding_idx':self.padding_idx
         }
@@ -190,11 +254,11 @@ class MHAModel(nn.Module):
         x = self.positional_encoding(x)
         if x.size(-1) != self.attention_dim:
             x = self.embed_to_encod_proj(x) # [B, S, D]
-        x = self.norm1(x)
+        # x = self.norm1(x)
         for layer in range(self.num_layers):
             x = self.encoder_stack[layer](x, key_padding_mask)
         # x [B, S, D]
-        x = self.norm2(x)
+        x = self.norm(x)
         logits = {}
         for key, value in self.classifiers_names_params.items():
             logits[key] = self.final_classifiers[key](x) # [B, S, num_classes_key]
