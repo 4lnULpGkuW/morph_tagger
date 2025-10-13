@@ -36,11 +36,11 @@ class EncoderBlock(nn.Module):
         Parameters:
             x (torch.Tensor): Тензор входных данных [B, N, D] или [N, B, D].
             key_padding_mask (torch.Tensor): Маска паддинга для внимания.
-                True → masked positions; False → unmasked.
+                True -> masked positions; False -> unmasked.
 
         Returns:
             torch.Tensor: Обновлённый тензор после Attention и Feed-Forward.
-            Размерность совпадает с входом.
+            Размерность совпадает со входом.
         """
         x = self.norm1(x)
         query, key, value = (self.query_ff(x), self.key_ff(x), self.value_ff(x))
@@ -49,7 +49,7 @@ class EncoderBlock(nn.Module):
 
         attention_out = attention_out * (~key_padding_mask).unsqueeze(-1).float()
 
-        x = x + self.dropout(attention_out) # residual
+        x = x + self.dropout(attention_out)
         encoder_out = self.encoder_ff(self.norm2(x))
 
         encoder_out = encoder_out * (~key_padding_mask).unsqueeze(-1).float()
@@ -58,37 +58,21 @@ class EncoderBlock(nn.Module):
 
 
 class MHAModel(nn.Module):
-    def __init__(self, max_seq_len:int, num_embeddings:int, embedding_dim:int, attention_dim:int, num_heads:int, num_layers:int, dim_classifier_ff_hidden:int, dim_encoder_ff:int,\
-                 classifiers_names_params:dict[str, int], pos_encoding:str, dropout:float, temperature:float, batch_first:bool, init_weights:bool=True, bias:bool=True, padding_idx:int=0):
-        """
-        Модель Multi-Head Attention (MHA) для классификации различных признаков.
-        Включает:
-            - эмбеддинг токенов
-            - обучаемое позиционное кодирование
-            - стек из EncoderBlock слоёв
-            - финальные классификаторы (для каждого признака)
-
-        Parameters:
-            max_seq_len (int): Максимальная длина последовательности.
-            num_embeddings (int): Количество токенов (длина словаря).
-            embedding_dim (int): Размерность векторов эмбеддингов токенов.
-            attention_dim (int): Размерность векторов внимания.
-            num_heads (int): Количество голов в Multi-Head Attention.
-            num_layers (int): Количество EncoderBlock слоёв.
-            dim_classifier_ff_hidden (int): Размер скрытого слоя финальных классификаторов.
-            dim_encoder_ff (int): Размер скрытого слоя Feed-Forward внутри EncoderBlock.
-            classifiers_names_params (dict[str, int]): Словарь {название признака : размер словаря}.
-                Ожидается, что ключ – название признака, а значение - размерность словаря выходного класса.
-            dropout (float): Вероятность dropout для регуляризации.
-            temperature (float): Температура для softmax в финальных классификаторах.
-            batch_first (bool, default=True): Указывает порядок батча.
-            bias (bool, default=True): Использовать смещение в линейных слоях.
-            padding_idx (int, default=0): Индекс паддинга для токенов.
-        """
-        # classifiers_names_params: ожидается словарь, где ключ - название признака, а значение - размерность словаря признака
+    def __init__(self, max_words_count:int, max_tokens_count:int, max_word_subtokens_count:int, num_embeddings:int, embedding_dim:int, attention_dim:int, num_heads:int, num_layers:int, dim_classifier_ff_hidden:int, dim_encoder_ff:int,\
+                 classifiers_names_params:dict[str, int], words_pos_encoding:str, tokens_pos_encoding:str, word_subtokens_pos_encoding:str, subtokens_aggregation:str, dropout:float,\
+                    temperature:float, batch_first:bool, init_weights:bool=True, bias:bool=True, padding_idx:int=0):
+        '''
+        words_pos_encoding (None | sin | learnable) - позиционное кодирование на уровне СЛОВ ПРЕДЛОЖЕНИЯ
+        tokens_pos_encoding (None | sin | learnable) - позиционное кодирование на уровне ТОКЕНОВ ПРЕДЛОЖЕНИЯ
+        word_subtokens_pos_encoding (None | sin | learnable) - позиционное кодирование на уровне ТОКЕНОВ ОДНОГО СЛОВА (sin пока не реализован)
+        subtokens_aggregation (sum | mean) - способ агрегации субтокенов одного слова
+        classifiers_names_params: ожидается словарь, где ключ - название признака, а значение - размерность словаря признака
+        '''
         super().__init__()
 
-        self.max_seq_len = max_seq_len
+        self.max_words_count = max_words_count
+        self.max_tokens_count = max_tokens_count
+        self.max_word_subtokens_count = max_word_subtokens_count
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.attention_dim = attention_dim
@@ -97,7 +81,10 @@ class MHAModel(nn.Module):
         self.dim_classifier_ff_hidden = dim_classifier_ff_hidden
         self.dim_encoder_ff = dim_encoder_ff
         self.classifiers_names_params = classifiers_names_params
-        self.pos_encoding = pos_encoding
+        self.words_pos_encoding_value = words_pos_encoding
+        self.tokens_pos_encoding_value = tokens_pos_encoding
+        self.word_subtokens_pos_encoding_value = word_subtokens_pos_encoding
+        self.subtokens_aggregation = subtokens_aggregation
         self.dropout = dropout
         self.temperature = temperature
         self.batch_first = batch_first
@@ -105,15 +92,34 @@ class MHAModel(nn.Module):
         self.bias = bias
         self.padding_idx = padding_idx
 
+        # Эмбединги токенов входгошо предложения предложения
         self.embedings = nn.Embedding(num_embeddings, embedding_dim, padding_idx)
-        if pos_encoding == 'sin':
-            self.positional_encoding = SinusoidalPositionalEncoding(embedding_dim, max_seq_len, batch_first)
-        elif pos_encoding == 'learnable':
-            self.positional_encoding = LearnablePositionalEncoding(embedding_dim, max_seq_len, batch_first)
-        else:
-            raise ValueError(f'Неверное значение параметра позиционного кодирования {pos_encoding}')
-        
+        # Используется, если embedding_dim < attention_dim
         self.embed_to_encod_proj = nn.Linear(embedding_dim, attention_dim, bias)
+
+        # Блок с определением позиционного кодирования на различных уровнях
+        if words_pos_encoding == 'sin':
+            self.words_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_words_count, batch_first)
+        elif words_pos_encoding == 'learnable':
+            self.words_pos_encoding = LearnablePositionalEncoding(embedding_dim, max_words_count, batch_first)
+        else:
+            self.words_pos_encoding = None
+
+        if tokens_pos_encoding == 'sin':
+            self.tokens_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_tokens_count, batch_first)
+        elif tokens_pos_encoding == 'learnable':
+            self.tokens_pos_encoding = LearnablePositionalEncoding(embedding_dim, max_tokens_count, batch_first)
+        else:
+            self.subtokens_pos_encoding = None
+
+        if word_subtokens_pos_encoding == 'sin':
+            self.word_subtokens_pos_encoding = None
+            # self.word_subtokens_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_word_subtokens_count, batch_first)
+        elif word_subtokens_pos_encoding == 'learnable':
+            self.word_subtokens_pos_encoding = nn.Embedding(max_word_subtokens_count, embedding_dim, padding_idx)
+        else:
+            self.word_subtokens_pos_encoding = None
+
         self.encoder_stack = nn.ModuleList([EncoderBlock(attention_dim, num_heads, dropout, dim_encoder_ff, bias, batch_first) for _ in range(num_layers)])
         self.norm = nn.LayerNorm(attention_dim)
 
@@ -135,8 +141,14 @@ class MHAModel(nn.Module):
                 self.embedings.weight[self.padding_idx].fill_(0)
 
         # Инициализация позиционных эмбеддингов
-        if self.pos_encoding == 'learnable':
-            nn.init.kaiming_normal_(self.positional_encoding.pos_embedings.weight, nonlinearity='relu')
+        if self.words_pos_encoding_value == 'learnable':
+            nn.init.kaiming_normal_(self.words_pos_encoding.pos_embedings.weight, nonlinearity='relu')
+
+        if self.tokens_pos_encoding_value == 'learnable':
+            nn.init.kaiming_normal_(self.tokens_pos_encoding.pos_embedings.weight, nonlinearity='relu')
+
+        if self.word_subtokens_pos_encoding_value == 'learnable':
+            nn.init.kaiming_normal_(self.word_subtokens_pos_encoding.weight, nonlinearity='relu')
 
         # Инициализация проекционного слоя
         nn.init.kaiming_uniform_(self.embed_to_encod_proj.weight, nonlinearity='relu')
@@ -180,7 +192,9 @@ class MHAModel(nn.Module):
 
     def get_hyperparams(self)->dict:
         return {
-            'max_seq_len':self.max_seq_len,
+            'max_words_count':self.max_words_count,
+            'max_tokens_count':self.max_tokens_count,
+            'max_word_subtokens_count':self.max_word_subtokens_count,
             'num_embeddings':self.num_embeddings,
             'embedding_dim':self.embedding_dim,
             'attention_dim':self.attention_dim,
@@ -189,7 +203,10 @@ class MHAModel(nn.Module):
             'dim_classifier_ff_hidden':self.dim_classifier_ff_hidden,
             'dim_encoder_ff':self.dim_encoder_ff,
             'classifiers_names_params':self.classifiers_names_params,
-            'pos_encoding':self.pos_encoding,
+            'words_pos_encoding':self.words_pos_encoding_value,
+            'tokens_pos_encoding':self.tokens_pos_encoding_value,
+            'word_subtokens_pos_encoding':self.word_subtokens_pos_encoding_value,
+            'subtokens_aggregation':self.subtokens_aggregation,
             'dropout':self.dropout,
             'temperature':self.temperature,
             'batch_first':self.batch_first,
@@ -198,53 +215,71 @@ class MHAModel(nn.Module):
             'padding_idx':self.padding_idx
         }
 
-    def forward(self, x, subtokens_cnt, apply_softmax: bool = False) -> dict[str, torch.Tensor]:
-        # print(f'x.size() {x.size()}')
-        # print(f'subtokens_cnt.size() {subtokens_cnt.size()}')
-
-        # Переносим subtokens_cnt на тот же device, что и x
-        subtokens_cnt = subtokens_cnt.to(x.device)
+    def subtokens_to_word_mask(self, subtokens_cnt:torch.Tensor, extended_S:int)->torch.Tensor:
+        '''Создает матрицу для суммирования суб-токенов в слово'''
+        B, S = subtokens_cnt.size() # S - истинный размер предложения, количество слов в нем
         
-        # Сохраняем исходную маску паддинга для токенов
-        key_padding_mask_tokens = (x == self.padding_idx)
-        
-        # Эмбеддинг и позиционное кодирование
-        x = self.embedings(x)  # [B, extended_S, E]
-        x = self.positional_encoding(x, key_padding_mask_tokens)
-
-        # print(f'after positionals x.size() {x.size()}')
-
-        # Создаем матрицу для агрегации токенов в слова
-        B, extended_S, D = x.size()
-        S = subtokens_cnt.size(1)
-        
-        # Вычисляем cumulative sum для определения границ слов
+        # Вычисляем кумулятивную сумму для определения границ слов. Каждое значение показывает, правую границу слова в количестве токенов от начала предложения
         cumsum_cnt = torch.cumsum(subtokens_cnt, dim=1)  # [B, S]
         
         # Создаем range [0, extended_S) для всех батчей
-        token_indices = torch.arange(extended_S, device=x.device).unsqueeze(0).expand(B, -1)  # [B, extended_S]
+        token_indices = torch.arange(extended_S, device=subtokens_cnt.device).unsqueeze(0).expand(B, -1)  # [B, extended_S]
         
-        # ВЕКТОРИЗОВАННОЕ создание маски без циклов
-        start_indices = torch.cat([
-            torch.zeros(B, 1, device=x.device, dtype=torch.long),
-            cumsum_cnt[:, :-1]
-        ], dim=1)  # [B, S]
+        # Начальные индексы каждого слова в предложении.
+        # Например, тензор [0, 3, 5] означает, что первое слово состоит из 3 токенов (индексы 0, 1, 2), второе слово из 2 токенов (3, 4), а третье слово - из оставшихся
+        start_indices = torch.cat([torch.zeros(B, 1, device=subtokens_cnt.device, dtype=torch.long),cumsum_cnt[:, :-1]], dim=1)  # [B, S]
         
-        # Создаем маску используя broadcasting
+        # Создаем маски
         start_expanded = start_indices.unsqueeze(-1)  # [B, S, 1]
-        end_expanded = start_expanded + subtokens_cnt.unsqueeze(-1)  # [B, S, 1]
+        end_expanded = start_expanded + subtokens_cnt.unsqueeze(-1)  # [B, S, 1]. Конечные индексы каждого слова в предложении
         token_indices_expanded = token_indices.unsqueeze(1)  # [B, 1, extended_S]
         
+        # При сравнении происходит broadcasting каждого тензора к размерности [B, S, extended_S]
+        # Логика сравнения: значения j (измерение extended_S) word_mask для слова i (измерение S) будут True, если для слова i его стартовый индекс окажется не больше значений j и значения j окажутся строго меньше его конечного индекса.
+        # Таким мы получаем некоторый отрезок на числовой оси token_indices_expanded
         word_mask = (token_indices_expanded >= start_expanded) & (token_indices_expanded < end_expanded)
         word_mask = word_mask.float()  # [B, S, extended_S]
-        
-        # Агрегируем токены в слова (суммируем)
-        x = torch.bmm(word_mask, x)  # [B, S, D]
+        return word_mask
 
-        # print(f'after magic algorithm x.size() {x.size()}')
+    def forward(self, x:torch.Tensor, subtokens_cnt:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
+        # x [B, extended_S]. Ясно, что extended_S = S+K, где K - количество дополнительных субтокенов, на которое было разбито слово
+
+        # Получаем маску размером [B, S, extended_S], где для каждого слова обозначены (1 | 0) его субтокены.
+        # Можно сказать, что word_mask - блочная диагональная матрица, где каждый блок это плотный вектор единиц
+        word_mask = self.subtokens_to_word_mask(subtokens_cnt, x.size(1))
+
+        # Исходная паддинг маска
+        subtokens_key_padding_mask = (x == self.padding_idx)
+        
+        # Эмбеддингs
+        x = self.embedings(x)
+
+        # Позиционное кодирование на уровне субтокенов одного слова
+        if self.word_subtokens_pos_encoding_value is not None:
+            # Вызывая cumsum, получаем индексы токенов в предложении. Затем обнуляем позиции, которые изначально были нулем. Затем суммируем, чтобы получить матрицу [B, extended_S] с индексами токенов в слове
+            subtokens_in_word_indices = (word_mask.cumsum(dim=2) * word_mask).sum(dim=1)
+            # print(subtokens_in_word_indices.mean())
+            word_subtokens_embed = self.word_subtokens_pos_encoding(subtokens_in_word_indices.to(dtype=torch.long))
+            x = x + word_subtokens_embed
+        
+        # Позиционное кодирование на уровне токенов предложения
+        if self.tokens_pos_encoding_value is not None:
+            x = self.tokens_pos_encoding(x, subtokens_key_padding_mask)
+            
+        # Маска агрегации субтокенов одного слова в целое
+        if self.subtokens_aggregation == 'mean':
+            word_mask = (word_mask / (word_mask.sum(dim=1, keepdim=True) + 1e-8)) * word_mask # Делим каждую строку на сумму элементов в ней, а затем применяем маскирование, чтобы обнулить ненулевые элементы
+        
+        # Агрегируем токены в слова (суммируем ненулевые позиции)
+        # [B, S, extended_S] * [B, extended_S, E]
+        x = torch.bmm(word_mask, x)  # [B, S, E]
         
         # Обновляем key_padding_mask для слов
-        key_padding_mask = (subtokens_cnt == 0)  # [B, S]
+        words_key_padding_mask = (subtokens_cnt == 0)  # [B, S]
+
+        # Позиционное кодирование на уровне слов
+        if self.words_pos_encoding_value is not None:
+            x = self.words_pos_encoding(x, words_key_padding_mask) # [B, S, E]
         
         # Проекция
         if x.size(-1) != self.attention_dim:
@@ -252,7 +287,7 @@ class MHAModel(nn.Module):
         
         # Проход через энкодер
         for layer in range(self.num_layers):
-            x = self.encoder_stack[layer](x, key_padding_mask)
+            x = self.encoder_stack[layer](x, words_key_padding_mask)
         # Нормализация
         x = self.norm(x)
         
@@ -264,5 +299,5 @@ class MHAModel(nn.Module):
         if apply_softmax:
             for key in logits:
                 logits[key] = nn.functional.softmax(logits[key] / self.temperature, dim=-1)
-        
+
         return logits
