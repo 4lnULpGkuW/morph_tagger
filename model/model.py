@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 from model.positional_encoding import LearnablePositionalEncoding, SinusoidalPositionalEncoding
 
 
@@ -26,7 +27,7 @@ class EncoderBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(attention_dim)
 
-        self.encoder_ff =  nn.Sequential(nn.Linear(attention_dim, dim_encoder_ff, bias), nn.ReLU(), nn.Dropout(dropout),\
+        self.encoder_ff =  nn.Sequential(nn.Linear(attention_dim, dim_encoder_ff, bias), nn.GELU(), nn.Dropout(dropout),\
                                          nn.Linear(dim_encoder_ff, attention_dim, bias))
     
     def forward(self, x, key_padding_mask):
@@ -59,13 +60,14 @@ class EncoderBlock(nn.Module):
 
 class MHAModel(nn.Module):
     def __init__(self, max_words_count:int, max_tokens_count:int, max_word_subtokens_count:int, num_embeddings:int, embedding_dim:int, attention_dim:int, num_heads:int, num_layers:int, dim_classifier_ff_hidden:int, dim_encoder_ff:int,\
-                 classifiers_names_params:dict[str, int], words_pos_encoding:str, tokens_pos_encoding:str, word_subtokens_pos_encoding:str, subtokens_aggregation:str, dropout:float,\
+                 classifiers_names_params:dict[str, int], words_pos_encoding:str, tokens_pos_encoding:str, word_subtokens_pos_encoding:str, subtokens_aggregation:str, aggregation_moment:str, dropout:float,\
                     temperature:float, batch_first:bool, init_weights:bool=True, bias:bool=True, padding_idx:int=0):
         '''
         words_pos_encoding (None | sin | learnable) - позиционное кодирование на уровне СЛОВ ПРЕДЛОЖЕНИЯ
         tokens_pos_encoding (None | sin | learnable) - позиционное кодирование на уровне ТОКЕНОВ ПРЕДЛОЖЕНИЯ
         word_subtokens_pos_encoding (None | sin | learnable) - позиционное кодирование на уровне ТОКЕНОВ ОДНОГО СЛОВА (sin пока не реализован)
         subtokens_aggregation (sum | mean) - способ агрегации субтокенов одного слова
+        aggregation_moment (early | late) - агрегация до MHA или после MHA
         classifiers_names_params: ожидается словарь, где ключ - название признака, а значение - размерность словаря признака
         '''
         super().__init__()
@@ -85,6 +87,7 @@ class MHAModel(nn.Module):
         self.tokens_pos_encoding_value = tokens_pos_encoding
         self.word_subtokens_pos_encoding_value = word_subtokens_pos_encoding
         self.subtokens_aggregation = subtokens_aggregation
+        self.aggregation_moment = aggregation_moment
         self.dropout = dropout
         self.temperature = temperature
         self.batch_first = batch_first
@@ -92,12 +95,25 @@ class MHAModel(nn.Module):
         self.bias = bias
         self.padding_idx = padding_idx
 
-        # Эмбединги токенов входгошо предложения предложения
+        # Определение матриц механизма внимания для агрегации субтокенов
+        if subtokens_aggregation == 'attention':
+            if aggregation_moment == 'early':
+                self.one_over_dim_sqrt = 1 / (math.sqrt(self.embedding_dim))
+                self.aggregation_q = nn.Linear(embedding_dim, embedding_dim, bias)
+                self.aggregation_k = nn.Linear(embedding_dim, embedding_dim, bias)
+            else:
+                self.one_over_dim_sqrt = 1 / (math.sqrt(self.attention_dim))
+                self.aggregation_q = nn.Linear(attention_dim, attention_dim, bias)
+                self.aggregation_k = nn.Linear(attention_dim, attention_dim, bias)
+
+
+        # Эмбединги токенов входного предложения предложения
         self.embedings = nn.Embedding(num_embeddings, embedding_dim, padding_idx)
         # Используется, если embedding_dim < attention_dim
         self.embed_to_encod_proj = nn.Linear(embedding_dim, attention_dim, bias)
 
         # Блок с определением позиционного кодирования на различных уровнях
+        # Позиционное кодирование на уровне слов
         if words_pos_encoding == 'sin':
             self.words_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_words_count, batch_first)
         elif words_pos_encoding == 'learnable':
@@ -105,13 +121,15 @@ class MHAModel(nn.Module):
         else:
             self.words_pos_encoding = None
 
+        # Позиционное кодирование на уровне токенов
         if tokens_pos_encoding == 'sin':
             self.tokens_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_tokens_count, batch_first)
         elif tokens_pos_encoding == 'learnable':
             self.tokens_pos_encoding = LearnablePositionalEncoding(embedding_dim, max_tokens_count, batch_first)
         else:
-            self.subtokens_pos_encoding = None
+            self.tokens_pos_encoding = None
 
+        # Позиционное кодирование на уровне субтокенов слова
         if word_subtokens_pos_encoding == 'sin':
             self.word_subtokens_pos_encoding = None
             # self.word_subtokens_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_word_subtokens_count, batch_first)
@@ -124,7 +142,7 @@ class MHAModel(nn.Module):
         self.norm = nn.LayerNorm(attention_dim)
 
         self.final_classifiers = nn.ModuleDict({key:nn.Sequential(
-            nn.Linear(attention_dim, dim_classifier_ff_hidden, bias), nn.ReLU(), nn.Dropout(dropout), nn.Linear(dim_classifier_ff_hidden, value, bias))\
+            nn.Linear(attention_dim, dim_classifier_ff_hidden, bias), nn.GELU(), nn.Dropout(dropout), nn.Linear(dim_classifier_ff_hidden, value, bias))\
                 for key, value in classifiers_names_params.items()})
         if init_weights:
             print('using weights initialisation')
@@ -207,6 +225,7 @@ class MHAModel(nn.Module):
             'tokens_pos_encoding':self.tokens_pos_encoding_value,
             'word_subtokens_pos_encoding':self.word_subtokens_pos_encoding_value,
             'subtokens_aggregation':self.subtokens_aggregation,
+            'aggregation_moment':self.aggregation_moment,
             'dropout':self.dropout,
             'temperature':self.temperature,
             'batch_first':self.batch_first,
@@ -241,6 +260,19 @@ class MHAModel(nn.Module):
         word_mask = word_mask.float()  # [B, S, extended_S]
         return word_mask
 
+    def make_attention_word_mask(self, x:torch.Tensor, word_mask:torch.Tensor):
+        q_x, k_x = (self.aggregation_q(x), self.aggregation_k(x))
+        score = torch.bmm(q_x, k_x.transpose(1, 2)) * self.one_over_dim_sqrt
+        # Маскирование: разрешаем внимание только между субтокенами одного слова
+        attention_mask = torch.bmm(word_mask.transpose(1, 2), word_mask)  # [B, extended_S, extended_S]
+        score = score.masked_fill(attention_mask == 0, -1e8)
+                
+        score = nn.functional.softmax(score, dim=-1)
+        score_word_mask = torch.bmm(word_mask, score)
+        word_mask = score_word_mask * word_mask # Получаем word_mask, где в для каждого слова (dim=1) содержатся весовые коэффициенты его субтокенов (dim=2)
+                                                # Если субтокен не принадлежит слову, то значение весового коэффициента = 0
+        return word_mask
+    
     def forward(self, x:torch.Tensor, subtokens_cnt:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
         # x [B, extended_S]. Ясно, что extended_S = S+K, где K - количество дополнительных субтокенов, на которое было разбито слово
 
@@ -248,10 +280,13 @@ class MHAModel(nn.Module):
         # Можно сказать, что word_mask - блочная диагональная матрица, где каждый блок это плотный вектор единиц
         word_mask = self.subtokens_to_word_mask(subtokens_cnt, x.size(1))
 
-        # Исходная паддинг маска
-        subtokens_key_padding_mask = (x == self.padding_idx)
+        # паддинг маска для субтокенов
+        subtokens_key_padding_mask = (x == self.padding_idx) # [B, extended_S]
+        key_padding_mask = subtokens_key_padding_mask
+        # key_padding_mask для слов
+        words_key_padding_mask = (subtokens_cnt == self.padding_idx)  # [B, S]
         
-        # Эмбеддингs
+        # Эмбеддинг
         x = self.embedings(x)
 
         # Позиционное кодирование на уровне субтокенов одного слова
@@ -266,20 +301,23 @@ class MHAModel(nn.Module):
         if self.tokens_pos_encoding_value is not None:
             x = self.tokens_pos_encoding(x, subtokens_key_padding_mask)
             
-        # Маска агрегации субтокенов одного слова в целое
+        # Маска агрегации субтокенов одного слова в целое взятием среднего
         if self.subtokens_aggregation == 'mean':
             word_mask = (word_mask / (word_mask.sum(dim=1, keepdim=True) + 1e-8)) * word_mask # Делим каждую строку на сумму элементов в ней, а затем применяем маскирование, чтобы обнулить ненулевые элементы
         
-        # Агрегируем токены в слова (суммируем ненулевые позиции)
-        # [B, S, extended_S] * [B, extended_S, E]
-        x = torch.bmm(word_mask, x)  # [B, S, E]
-        
-        # Обновляем key_padding_mask для слов
-        words_key_padding_mask = (subtokens_cnt == 0)  # [B, S]
+        # Маска агрегации субтокенов одного слова в целое при помощи механизма внимания
+        if self.subtokens_aggregation == 'attention':
+            word_mask = self.make_attention_word_mask(x, word_mask)
+
+        # Агрегация субтокенов одного слова до MHA
+        if self.aggregation_moment == 'early':
+            # Агрегируем токены в слова (суммируем ненулевые позиции) [B, S, extended_S] * [B, extended_S, E]
+            x = torch.bmm(word_mask, x)  # [B, S, E]
+            key_padding_mask = words_key_padding_mask
 
         # Позиционное кодирование на уровне слов
         if self.words_pos_encoding_value is not None:
-            x = self.words_pos_encoding(x, words_key_padding_mask) # [B, S, E]
+            x = self.words_pos_encoding(x, key_padding_mask) # [B, S, E]
         
         # Проекция
         if x.size(-1) != self.attention_dim:
@@ -287,7 +325,13 @@ class MHAModel(nn.Module):
         
         # Проход через энкодер
         for layer in range(self.num_layers):
-            x = self.encoder_stack[layer](x, words_key_padding_mask)
+            x = self.encoder_stack[layer](x, key_padding_mask)
+
+        # Агрегация субтокенов одного слова после MHA
+        if self.aggregation_moment != 'early':
+            # Агрегируем токены в слова (суммируем ненулевые позиции) [B, S, extended_S] * [B, extended_S, D]
+            x = torch.bmm(word_mask, x)  # [B, S, D]
+
         # Нормализация
         x = self.norm(x)
         
