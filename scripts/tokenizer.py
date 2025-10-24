@@ -37,7 +37,6 @@ def train_bpe_tokenizer(corpus_files:list[str], vocab_size:int, min_frequency:in
     # нормализация
     tokenizer.normalizer = normalizers.Sequence([
         NFD(),
-        Lowercase(),
         StripAccents()
     ])
     
