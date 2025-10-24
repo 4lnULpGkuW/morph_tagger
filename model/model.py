@@ -59,9 +59,12 @@ class EncoderBlock(nn.Module):
 
 
 class MHAModel(nn.Module):
-    def __init__(self, max_words_count:int, max_tokens_count:int, max_word_subtokens_count:int, num_embeddings:int, embedding_dim:int, attention_dim:int, num_heads:int, num_layers:int, dim_classifier_ff_hidden:int, dim_encoder_ff:int,\
-                 classifiers_names_params:dict[str, int], words_pos_encoding:str, tokens_pos_encoding:str, word_subtokens_pos_encoding:str, subtokens_aggregation:str, aggregation_moment:str, dropout:float,\
-                    temperature:float, batch_first:bool, init_weights:bool=True, bias:bool=True, padding_idx:int=0):
+    def __init__(self, max_words_count:int, max_tokens_count:int, max_word_subtokens_count:int, max_letters_count:int,\
+                letters_num_embeddings:int, tokens_num_embeddings:int, tokens_embedding_dim:int, letters_embeddings_dim:int,\
+                attention_dim:int, num_heads:int, num_layers:int, dim_classifier_ff_hidden:int, dim_encoder_ff:int,\
+                classifiers_names_params:dict[str, int], words_pos_encoding:str, tokens_pos_encoding:str, word_subtokens_pos_encoding:str,\
+                subtokens_aggregation:str, aggregation_moment:str, dropout:float, temperature:float, batch_first:bool, init_weights:bool=True,\
+                bias:bool=True, padding_idx:int=0):
         '''
         words_pos_encoding (None | sin | learnable) - позиционное кодирование на уровне СЛОВ ПРЕДЛОЖЕНИЯ
         tokens_pos_encoding (None | sin | learnable) - позиционное кодирование на уровне ТОКЕНОВ ПРЕДЛОЖЕНИЯ
@@ -75,8 +78,11 @@ class MHAModel(nn.Module):
         self.max_words_count = max_words_count
         self.max_tokens_count = max_tokens_count
         self.max_word_subtokens_count = max_word_subtokens_count
-        self.num_embeddings = num_embeddings
-        self.embedding_dim = embedding_dim
+        self.max_letters_count = max_letters_count
+        self.letters_num_embeddings = letters_num_embeddings
+        self.tokens_num_embeddings = tokens_num_embeddings
+        self.tokens_embedding_dim = tokens_embedding_dim
+        self.letters_embeddings_dim = letters_embeddings_dim
         self.attention_dim = attention_dim
         self.num_heads = num_heads
         self.num_layers = num_layers
@@ -98,43 +104,49 @@ class MHAModel(nn.Module):
         # Определение матриц механизма внимания для агрегации субтокенов
         if subtokens_aggregation == 'attention':
             if aggregation_moment == 'early':
-                self.one_over_dim_sqrt = 1 / (math.sqrt(self.embedding_dim))
-                self.aggregation_q = nn.Linear(embedding_dim, embedding_dim, bias)
-                self.aggregation_k = nn.Linear(embedding_dim, embedding_dim, bias)
+                self.one_over_tokens_dim_sqrt = 1 / (math.sqrt(self.tokens_embedding_dim))
+                self.aggregation_q = nn.Linear(tokens_embedding_dim, tokens_embedding_dim, bias)
+                self.aggregation_k = nn.Linear(tokens_embedding_dim, tokens_embedding_dim, bias)
             else:
-                self.one_over_dim_sqrt = 1 / (math.sqrt(self.attention_dim))
+                self.one_over_tokens_dim_sqrt = 1 / (math.sqrt(self.attention_dim))
                 self.aggregation_q = nn.Linear(attention_dim, attention_dim, bias)
                 self.aggregation_k = nn.Linear(attention_dim, attention_dim, bias)
 
+        # Матрицы внимания для символов слова
+        self.one_over_letters_dim_sqrt = 1 / (math.sqrt(self.letters_embeddings_dim))
+        self.letters_q = nn.Linear(letters_embeddings_dim, letters_embeddings_dim, bias)
+        self.letters_k = nn.Linear(letters_embeddings_dim, letters_embeddings_dim, bias)
+        self.letters_v = nn.Linear(letters_embeddings_dim, letters_embeddings_dim, bias)
 
-        # Эмбединги токенов входного предложения предложения
-        self.embedings = nn.Embedding(num_embeddings, embedding_dim, padding_idx)
-        # Используется, если embedding_dim < attention_dim
-        self.embed_to_encod_proj = nn.Linear(embedding_dim, attention_dim, bias)
+        # Эмбединги токенов входного предложения
+        self.tokens_embedings = nn.Embedding(tokens_num_embeddings, tokens_embedding_dim, padding_idx)
+        # Эмбединги символов входного предложения
+        self.letters_embeddings = nn.Embedding(letters_num_embeddings, letters_embeddings_dim, padding_idx)
+        # Используется, если tokens_embedding_dim + (max_letters_count * letters_embeddings_dim) < attention_dim
+        self.embed_to_encod_proj = nn.Linear(tokens_embedding_dim, attention_dim, bias)
 
         # Блок с определением позиционного кодирования на различных уровнях
         # Позиционное кодирование на уровне слов
         if words_pos_encoding == 'sin':
-            self.words_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_words_count, batch_first)
+            self.words_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_words_count, batch_first)
         elif words_pos_encoding == 'learnable':
-            self.words_pos_encoding = LearnablePositionalEncoding(embedding_dim, max_words_count, batch_first)
+            self.words_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_words_count, batch_first)
         else:
             self.words_pos_encoding = None
 
         # Позиционное кодирование на уровне токенов
         if tokens_pos_encoding == 'sin':
-            self.tokens_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_tokens_count, batch_first)
+            self.tokens_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_tokens_count, batch_first)
         elif tokens_pos_encoding == 'learnable':
-            self.tokens_pos_encoding = LearnablePositionalEncoding(embedding_dim, max_tokens_count, batch_first)
+            self.tokens_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_tokens_count, batch_first)
         else:
             self.tokens_pos_encoding = None
 
         # Позиционное кодирование на уровне субтокенов слова
         if word_subtokens_pos_encoding == 'sin':
-            self.word_subtokens_pos_encoding = None
-            # self.word_subtokens_pos_encoding = SinusoidalPositionalEncoding(embedding_dim, max_word_subtokens_count, batch_first)
+            raise ValueError('Синусоидальное позиционное кодирование для субтокенов слова пока не реализовано')
         elif word_subtokens_pos_encoding == 'learnable':
-            self.word_subtokens_pos_encoding = nn.Embedding(max_word_subtokens_count, embedding_dim, padding_idx)
+            self.word_subtokens_pos_encoding = nn.Embedding(max_word_subtokens_count, tokens_embedding_dim, padding_idx)
         else:
             self.word_subtokens_pos_encoding = None
 
@@ -153,25 +165,34 @@ class MHAModel(nn.Module):
         Инициализация весов модели
         """
         # Инициализация эмбеддингов
-        nn.init.kaiming_normal_(self.embedings.weight, nonlinearity='relu')
+        nn.init.kaiming_normal_(self.tokens_embedings.weight)
+        nn.init.kaiming_normal_(self.letters_embeddings.weight)
         if self.padding_idx is not None:
             with torch.no_grad():
-                self.embedings.weight[self.padding_idx].fill_(0)
+                self.tokens_embedings.weight[self.padding_idx].fill_(0)
+                self.letters_embeddings.weight[self.padding_idx].fill_(0)
 
         # Инициализация позиционных эмбеддингов
         if self.words_pos_encoding_value == 'learnable':
-            nn.init.kaiming_normal_(self.words_pos_encoding.pos_embedings.weight, nonlinearity='relu')
+            nn.init.kaiming_normal_(self.words_pos_encoding.pos_embedings.weight)
 
         if self.tokens_pos_encoding_value == 'learnable':
-            nn.init.kaiming_normal_(self.tokens_pos_encoding.pos_embedings.weight, nonlinearity='relu')
+            nn.init.kaiming_normal_(self.tokens_pos_encoding.pos_embedings.weight)
 
         if self.word_subtokens_pos_encoding_value == 'learnable':
-            nn.init.kaiming_normal_(self.word_subtokens_pos_encoding.weight, nonlinearity='relu')
+            nn.init.kaiming_normal_(self.word_subtokens_pos_encoding.weight)
 
         # Инициализация проекционного слоя
-        nn.init.kaiming_uniform_(self.embed_to_encod_proj.weight, nonlinearity='relu')
+        nn.init.kaiming_uniform_(self.embed_to_encod_proj.weight)
         if self.bias:
             nn.init.constant_(self.embed_to_encod_proj.bias, 0.0)
+
+        if self.subtokens_aggregation == 'attention':
+            nn.init.kaiming_uniform_(self.aggregation_q.weight)
+            nn.init.kaiming_uniform_(self.aggregation_k.weight)
+            if self.bias:
+                nn.init.constant_(self.aggregation_q.bias, 0.0)
+                nn.init.constant_(self.aggregation_k.bias, 0.0)
 
         # Инициализация энкодеров
         for encoder in self.encoder_stack:
@@ -184,9 +205,9 @@ class MHAModel(nn.Module):
     def _init_encoder_weights(self, encoder):
         """Инициализация весов энкодера"""
         # Линейные слои внимания
-        nn.init.kaiming_uniform_(encoder.query_ff.weight, nonlinearity='relu')
-        nn.init.kaiming_uniform_(encoder.key_ff.weight, nonlinearity='relu')
-        nn.init.kaiming_uniform_(encoder.value_ff.weight, nonlinearity='relu')
+        nn.init.kaiming_uniform_(encoder.query_ff.weight)
+        nn.init.kaiming_uniform_(encoder.key_ff.weight)
+        nn.init.kaiming_uniform_(encoder.value_ff.weight)
         
         if self.bias:
             nn.init.constant_(encoder.query_ff.bias, 0.0)
@@ -196,7 +217,7 @@ class MHAModel(nn.Module):
         # Feed-forward сеть энкодера
         for layer in encoder.encoder_ff:
             if isinstance(layer, nn.Linear):
-                nn.init.kaiming_uniform_(layer.weight, nonlinearity='relu')
+                nn.init.kaiming_uniform_(layer.weight)
                 if self.bias:
                     nn.init.constant_(layer.bias, 0.0)
 
@@ -204,7 +225,7 @@ class MHAModel(nn.Module):
         """Инициализация весов классификатора"""
         for layer in classifier:
             if isinstance(layer, nn.Linear):
-                nn.init.kaiming_uniform_(layer.weight, nonlinearity='relu')
+                nn.init.kaiming_uniform_(layer.weight)
                 if self.bias:
                     nn.init.constant_(layer.bias, 0.0)
 
@@ -213,8 +234,11 @@ class MHAModel(nn.Module):
             'max_words_count':self.max_words_count,
             'max_tokens_count':self.max_tokens_count,
             'max_word_subtokens_count':self.max_word_subtokens_count,
-            'num_embeddings':self.num_embeddings,
-            'embedding_dim':self.embedding_dim,
+            'max_letters_count':self.max_letters_count,
+            'letters_num_embeddings':self.letters_num_embeddings,
+            'tokens_num_embeddings':self.tokens_num_embeddings,
+            'tokens_embedding_dim':self.tokens_embedding_dim,
+            'letters_embeddings_dim':self.letters_embeddings_dim,
             'attention_dim':self.attention_dim,
             'num_heads':self.num_heads,
             'num_layers':self.num_layers,
@@ -262,19 +286,39 @@ class MHAModel(nn.Module):
 
     def make_attention_word_mask(self, x:torch.Tensor, word_mask:torch.Tensor):
         q_x, k_x = (self.aggregation_q(x), self.aggregation_k(x))
-        score = torch.bmm(q_x, k_x.transpose(1, 2)) * self.one_over_dim_sqrt
+        score = torch.bmm(q_x, k_x.transpose(1, 2)) * self.one_over_tokens_dim_sqrt # [B, extended_S, extended_S]
         # Маскирование: разрешаем внимание только между субтокенами одного слова
         attention_mask = torch.bmm(word_mask.transpose(1, 2), word_mask)  # [B, extended_S, extended_S]
         score = score.masked_fill(attention_mask == 0, -1e8)
                 
         score = nn.functional.softmax(score, dim=-1)
-        score_word_mask = torch.bmm(word_mask, score)
+        score_word_mask = torch.bmm(word_mask, score) # [B, S, extended_S]
         word_mask = score_word_mask * word_mask # Получаем word_mask, где в для каждого слова (dim=1) содержатся весовые коэффициенты его субтокенов (dim=2)
                                                 # Если субтокен не принадлежит слову, то значение весового коэффициента = 0
         return word_mask
-    
-    def forward(self, x:torch.Tensor, subtokens_cnt:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
+
+    def compute_letters_attention(self, letters:torch.Tensor, letters_padding_mask:torch.Tensor):
+        letters_q, letters_k, letters_v = (self.letters_q(letters), self.letters_k(letters), self.letters_v(letters))
+        
+        # attention scores
+        score = torch.matmul(letters_q, letters_k.transpose(-2, -1)) * self.one_over_letters_dim_sqrt  # [B, S, L, L]
+        
+        letters_padding_mask_expanded = letters_padding_mask.unsqueeze(-1)  # [B, S, L, 1]
+        letters_padding_mask_expanded = letters_padding_mask_expanded.expand(-1, -1, -1, letters.size(2))  # [B, S, L, L]
+        
+        score = score.masked_fill(letters_padding_mask_expanded, -1e8)
+        score = nn.functional.softmax(score, dim=-1)
+        
+        output = torch.matmul(score, letters_v)
+        
+        # Обнуляем выход для padding позиций
+        output = output * (~letters_padding_mask).unsqueeze(-1).float()
+        
+        return output
+
+    def forward(self, x:torch.Tensor, subtokens_cnt:torch.Tensor, letters:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
         # x [B, extended_S]. Ясно, что extended_S = S+K, где K - количество дополнительных субтокенов, на которое было разбито слово
+        # letters [B, S, L], где L - количество символов
 
         # Получаем маску размером [B, S, extended_S], где для каждого слова обозначены (1 | 0) его субтокены.
         # Можно сказать, что word_mask - блочная диагональная матрица, где каждый блок это плотный вектор единиц
@@ -285,9 +329,19 @@ class MHAModel(nn.Module):
         key_padding_mask = subtokens_key_padding_mask
         # key_padding_mask для слов
         words_key_padding_mask = (subtokens_cnt == self.padding_idx)  # [B, S]
+        # паддинг маска для символов
+        letters_padding_mask = (letters == self.padding_idx)
         
-        # Эмбеддинг
-        x = self.embedings(x)
+        # Эмбеддингs
+        x = self.tokens_embedings(x)
+        letters_embed = self.letters_embeddings(letters) # [B, S, L, Le]
+
+        # внимание для букв слова
+        letters_embed = self.compute_letters_attention(letters_embed, letters_padding_mask) # [B, S, L, Le]
+
+        # Конкатенируем векторные представления букв одного слова
+        B, S, L, E = letters_embed.size()
+        letters_embed = letters_embed.reshape(B, S, L*E)
 
         # Позиционное кодирование на уровне субтокенов одного слова
         if self.word_subtokens_pos_encoding_value is not None:
@@ -319,10 +373,13 @@ class MHAModel(nn.Module):
         if self.words_pos_encoding_value is not None:
             x = self.words_pos_encoding(x, key_padding_mask) # [B, S, E]
         
-        # Проекция
-        if x.size(-1) != self.attention_dim:
-            x = self.embed_to_encod_proj(x)  # [B, S, D]
+        # Проекция. Не используется сейчас
+        # if x.size(-1) != self.attention_dim:
+        #     x = self.embed_to_encod_proj(x)  # [B, S, D]
         
+        # Конкатенируем векторные представления букв и токенов
+        x = torch.cat([x, letters_embed], dim=2) # [B, S, D + L*Le]
+
         # Проход через энкодер
         for layer in range(self.num_layers):
             x = self.encoder_stack[layer](x, key_padding_mask)
