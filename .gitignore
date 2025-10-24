@@ -2,3 +2,6 @@
 __pycache__/
 data/
 train.py
+model_hyperparams.json
+model_params.pt
+.gitignore

@@ -4,7 +4,7 @@ import pandas as pd
 from scripts.vocabulary import Vocabulary
 
 class Vectorizer:
-    def __init__(self, tokenizer, src_vocab:Vocabulary, trg_vocabs:dict[str:Vocabulary], pad_idx:int):
+    def __init__(self, tokenizer, src_vocab:Vocabulary, trg_vocabs:dict[str:Vocabulary], letter_vocab:Vocabulary, pad_idx:int):
         """
         Инициализирует объект, который преобразует токены в индексы.
 
@@ -23,6 +23,7 @@ class Vectorizer:
         self.src_vocab = src_vocab
         self.target_cnt = len(trg_vocabs)
         self.trg_vocabs = trg_vocabs
+        self.letter_vocab = letter_vocab
         self.pad_idx = pad_idx
 
 
@@ -56,7 +57,7 @@ class Vectorizer:
         return indices
     
     
-    def pad_sequence(self, indices:list[int], force_max_len:int, pad_idx:int):
+    def pad_sequence(self, indices:list[int], forced_max_len:int, pad_idx:int):
         """
         Паддинг последовательности до заданной длины.
 
@@ -69,35 +70,36 @@ class Vectorizer:
             иначе используется текущая длина последовательности (для инференса).
         """
         # Для обучения используем максимальную длину предложения, для инференса - длину текущего предложения
-        if force_max_len > 0:
-            seq_len = force_max_len
+        if forced_max_len > 0:
+            seq_len = forced_max_len
         else:
             seq_len = len(indices)
-        
-        padded = [pad_idx] * seq_len # Заполнение индексом маскировочного токена
-        padded[:len(indices)] = indices # Заполнение индексами реальных токенов
+
+        # Заполнение индексом маскировочного токена
+        padded = [pad_idx] * seq_len
+        # Заполнение индексами реальных токенов. Если количество токенов превышает заданную длину, то они просто отсекаются
+        padded[:min(len(indices), seq_len)] = indices[:min(len(indices), seq_len)]
         return padded
 
 
-    def vectorize(self, df_row:pd.Series, target_names:list[str], max_tokens_count:int, max_words_count:int, add_bos_eos_tokens:bool=True)->tuple[list[int], dict[str, list[int]]]:
-        """
-        Принимает строку датафрейма и возвращает набор индексов:
-            (векторизованный source, {название target : векторизованный target}).
-
-        Parameters
-        ----------
-        df_row : pd.Series
-            Строка из DataFrame с токенами для source и целевых меток.
-        target_names : list[str]
-            Список названий целевых меток.
-        """
+    def vectorize(self, df_row:pd.Series, target_names:list[str], max_tokens_count:int, max_words_count:int, max_letters_count:int, add_bos_eos_tokens:bool=True)->dict[str, list[int]]:
         source_tokens = df_row['source_words']
         tokenized_source = []
         subtokens_cnt = []
-        for token in source_tokens:
+        letters = [[self.pad_idx]*max_letters_count for _ in range(max_words_count)] # Изанчально заполняем паддингом
+        for idx, token in enumerate(source_tokens):
             tokenized = self.tokenizer.encode(token).tokens
+            # Убрать
+            if len(tokenized) < 1:
+                print('What!?!?')
+            # Убрать
             tokenized_source.extend(tokenized)
             subtokens_cnt.append(max(len(tokenized), 1)) # Вычисляем количество субтокенов для каждого слова
+
+            cur_letters = list(token) # Получаем список букв слова
+            letters_indices = self.get_indices(cur_letters, self.letter_vocab, add_bos=False, add_eos=False) # Получаем индексы букв из словаря
+            letters_vectorized = self.pad_sequence(letters_indices, max_letters_count, self.pad_idx) # Заполняем пространство паддингом
+            letters[idx] = letters_vectorized
 
         src_indices = self.get_indices(tokenized_source, self.src_vocab, add_bos=add_bos_eos_tokens, add_eos=add_bos_eos_tokens)
         src_vectorized = self.pad_sequence(src_indices, max_tokens_count, self.pad_idx)
@@ -110,5 +112,6 @@ class Vectorizer:
         return {
             'src_vectorized':src_vectorized,
             'subtokens_cnt':subtokens_cnt,
+            'letters':letters,
             'trg_vectorized':trg_vectorized
         }

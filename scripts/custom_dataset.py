@@ -1,7 +1,7 @@
 import torch
 
 class CustomDataset:
-    def __init__(self, vectorizer, train_df, target_names:list[str], max_tokens_count:int, max_words_count:int, add_bos_eos_tokens:bool=True, test_df=None, valid_df=None):
+    def __init__(self, vectorizer, train_df, target_names:list[str], max_tokens_count:int, max_words_count:int, max_letters_count:int, add_bos_eos_tokens:bool=True, test_df=None, valid_df=None):
         """
         Создаёт Dataset для обучения/инференса.
 
@@ -25,6 +25,7 @@ class CustomDataset:
         self.target_names = target_names
         self.max_tokens_count = max_tokens_count
         self.max_words_count = max_words_count
+        self.max_letters_count = max_letters_count
         self.add_bos_eos_tokens = add_bos_eos_tokens
         self.set_dataframe_split('train')
 
@@ -53,10 +54,12 @@ class CustomDataset:
     def __getitem__(self, index:int):
         '''Возвращает словарь {source_x : source_vec(tensor), target_names : target_vecs(tensor)}'''
         row = self.cw_df.iloc[index]
-        vectorized_dict = self.vectorizer.vectorize(row, self.target_names, max_tokens_count=self.max_tokens_count, max_words_count=self.max_words_count, add_bos_eos_tokens=self.add_bos_eos_tokens)
+        vectorized_dict = self.vectorizer.vectorize(row, self.target_names, max_tokens_count=self.max_tokens_count, max_words_count=self.max_words_count,\
+                                                    max_letters_count=self.max_letters_count, add_bos_eos_tokens=self.add_bos_eos_tokens)
         vectorized = {}
         for key, value in vectorized_dict['trg_vectorized'].items():
             vectorized[key] = torch.tensor(value)  # Преобразуем в тензор
         vectorized['source_x'] = torch.tensor(vectorized_dict['src_vectorized'])
         vectorized['subtokens_cnt'] = torch.tensor(vectorized_dict['subtokens_cnt'])
+        vectorized['letters'] = torch.tensor(vectorized_dict['letters']) # Двумерный тензор
         return vectorized
