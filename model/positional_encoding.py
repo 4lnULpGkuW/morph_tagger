@@ -13,10 +13,10 @@ class LearnablePositionalEncoding(nn.Module):
             - True -> [B, N, D]
             - False -> [N, B, D]
     """
-    def __init__(self, embed_dim:int, max_seq_len:int, batch_first:bool):
+    def __init__(self, embed_dim:int, max_seq_len:int, batch_first:bool, padding_idx:int):
         super().__init__()
         self.batch_first = batch_first
-        self.pos_embedings = nn.Embedding(max_seq_len, embed_dim)
+        self.pos_embedings = nn.Embedding(max_seq_len, embed_dim, padding_idx)
 
     def forward(self, x:torch.Tensor, key_padding_mask=None):
         """
@@ -29,15 +29,15 @@ class LearnablePositionalEncoding(nn.Module):
             torch.Tensor: Сумма исходного тензора и позиционного эмбеддинга.
             Размерность совпадает со входом.
         """
-        # x [B, N, D]
+        # x [B, S, D]
         if self.batch_first:
             seq_len = x.size(1)
-            pos_idx = torch.arange(seq_len, device=x.device).unsqueeze(0)  # [1, S]
+            pos_idx = torch.arange(seq_len, device=x.device).unsqueeze(0)  # [1, seq_len]
         else:
             seq_len = x.size(0)
-            pos_idx = torch.arange(seq_len, device=x.device).unsqueeze(1)  # [S, 1]
+            pos_idx = torch.arange(seq_len, device=x.device).unsqueeze(1)  # [seq_len, 1]
         
-        pos_embed = self.pos_embedings(pos_idx) # [1, S, D] | [S, 1, D]
+        pos_embed = self.pos_embedings(pos_idx) # [1, seq_len, D] | [seq_len, 1, D]
 
         if key_padding_mask is not None:
             mask = key_padding_mask.unsqueeze(-1)
@@ -51,7 +51,7 @@ class SinusoidalPositionalEncoding(nn.Module):
         self.batch_first = batch_first
         position_matrix = torch.zeros(max_seq_len, embed_dim)
 
-        positions = torch.arange(0,max_seq_len).unsqueeze(1)
+        positions = torch.arange(0,max_seq_len).unsqueeze(1) # [S, 1]
         denominator = torch.exp((-math.log(10000.0) * torch.arange(0, embed_dim, 2) / embed_dim))
 
         position_matrix[:, 0::2] = torch.sin(positions*denominator)
