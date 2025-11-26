@@ -86,15 +86,11 @@ class Vectorizer:
         source_tokens = df_row['source_words']
         tokenized_source = []
         subtokens_cnt = []
-        letters = [[self.pad_idx]*max_letters_count for _ in range(max_words_count)] # Изанчально заполняем паддингом
+        letters = [[self.pad_idx]*max_letters_count for _ in range(max_words_count)] # Изначально заполняем паддингом
         for idx, token in enumerate(source_tokens):
             tokenized = self.tokenizer.encode(token).tokens
-            # Убрать
-            if len(tokenized) < 1:
-                print('What!?!?')
-            # Убрать
             tokenized_source.extend(tokenized)
-            subtokens_cnt.append(max(len(tokenized), 1)) # Вычисляем количество субтокенов для каждого слова
+            subtokens_cnt.append(len(tokenized)) # Вычисляем количество субтокенов для каждого слова
 
             cur_letters = list(token) # Получаем список букв слова
             letters_indices = self.get_indices(cur_letters, self.letter_vocab, add_bos=False, add_eos=False) # Получаем индексы букв из словаря
