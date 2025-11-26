@@ -35,10 +35,10 @@ def train_bpe_tokenizer(corpus_files:list[str], vocab_size:int, min_frequency:in
     tokenizer = Tokenizer(BPE(unk_token=unk_token))
     
     # нормализация
-    tokenizer.normalizer = normalizers.Sequence([
-        NFD(),
-        StripAccents()
-    ])
+    # tokenizer.normalizer = normalizers.Sequence([
+    #     NFD(),
+    #     StripAccents()
+    # ])
     
     # пред-токенизация
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
