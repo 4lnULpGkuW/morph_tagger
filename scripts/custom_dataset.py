@@ -1,7 +1,8 @@
 import torch
+from vectorizer import Vectorizer
 
 class CustomDataset:
-    def __init__(self, vectorizer, train_df, target_names:list[str], max_tokens_count:int, max_words_count:int, max_letters_count:int, add_bos_eos_tokens:bool=True, test_df=None, valid_df=None):
+    def __init__(self, vectorizer:Vectorizer, train_df, target_names:list[str], max_tokens_count:int, max_words_count:int, max_letters_count:int, add_bos_eos_tokens:bool=True, test_df=None, valid_df=None):
         """
         Создаёт Dataset для обучения/инференса.
 
@@ -57,9 +58,8 @@ class CustomDataset:
         vectorized_dict = self.vectorizer.vectorize(row, self.target_names, max_tokens_count=self.max_tokens_count, max_words_count=self.max_words_count,\
                                                     max_letters_count=self.max_letters_count, add_bos_eos_tokens=self.add_bos_eos_tokens)
         vectorized = {}
-        for key, value in vectorized_dict['trg_vectorized'].items():
+        for key, value in vectorized_dict['target'].items():
             vectorized[key] = torch.tensor(value)  # Преобразуем в тензор
-        vectorized['source_x'] = torch.tensor(vectorized_dict['src_vectorized'])
-        vectorized['subtokens_cnt'] = torch.tensor(vectorized_dict['subtokens_cnt'])
+        vectorized['tokens'] = torch.tensor(vectorized_dict['tokens'])
         vectorized['letters'] = torch.tensor(vectorized_dict['letters']) # Двумерный тензор
         return vectorized

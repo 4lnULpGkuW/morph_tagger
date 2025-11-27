@@ -80,34 +80,62 @@ class Vectorizer:
         # Заполнение индексами реальных токенов. Если количество токенов превышает заданную длину, то они просто отсекаются
         padded[:min(len(indices), seq_len)] = indices[:min(len(indices), seq_len)]
         return padded
-
-
+    
     def vectorize(self, df_row:pd.Series, target_names:list[str], max_tokens_count:int, max_words_count:int, max_letters_count:int, add_bos_eos_tokens:bool=True)->dict[str, list[int]]:
-        source_tokens = df_row['source_words']
-        tokenized_source = []
-        subtokens_cnt = []
-        letters = [[self.pad_idx]*max_letters_count for _ in range(max_words_count)] # Изначально заполняем паддингом
-        for idx, token in enumerate(source_tokens):
-            tokenized = self.tokenizer.encode(token).tokens
-            tokenized_source.extend(tokenized)
-            subtokens_cnt.append(len(tokenized)) # Вычисляем количество субтокенов для каждого слова
+        '''Возвращает словарь:
+        tokens : массив, где каждому слову соответствует список индексов токенов.
+        letters : массив, где каждому слову соответствует список индексов букв.
+        trg_vectorized : массив с индексами целевых меток для каждого слова'''
 
-            cur_letters = list(token) # Получаем список букв слова
-            letters_indices = self.get_indices(cur_letters, self.letter_vocab, add_bos=False, add_eos=False) # Получаем индексы букв из словаря
-            letters_vectorized = self.pad_sequence(letters_indices, max_letters_count, self.pad_idx) # Заполняем пространство паддингом
-            letters[idx] = letters_vectorized
+        source_words = df_row['source_words']
+        tokens = [[self.pad_idx]*max_tokens_count for _ in range(max_words_count)] # Каждому слову соответствует список токенов. Изначально заполняем паддингом
+        letters = [[self.pad_idx]*max_letters_count for _ in range(max_words_count)] # Каждому слову соответствует список букв.
+        for idx, word in enumerate(source_words):
+            tokenized = self.tokenizer.encode(word).tokens
+            tokens_indices = self.get_indices(tokenized, self.src_vocab, False, False) # Получаем индексы токенов из словаря
+            tokens[idx] = self.pad_sequence(tokens_indices, max_tokens_count, self.pad_idx) # Либо дополняем паддингом последовательность, либо обрезаем лишнее
 
-        src_indices = self.get_indices(tokenized_source, self.src_vocab, add_bos=add_bos_eos_tokens, add_eos=add_bos_eos_tokens)
-        src_vectorized = self.pad_sequence(src_indices, max_tokens_count, self.pad_idx)
-        subtokens_cnt = self.pad_sequence(subtokens_cnt, max_words_count, self.pad_idx)
+            cur_letters = list(word) # Получаем список букв слова
+            letters_indices = self.get_indices(cur_letters, self.letter_vocab, add_bos=False, add_eos=False)
+            letters[idx] = self.pad_sequence(letters_indices, max_letters_count, self.pad_idx)
+
         trg_vectorized = {}
         for target_name in target_names:
             trg_indices = self.get_indices(df_row[target_name], self.trg_vocabs[target_name], add_bos=add_bos_eos_tokens, add_eos=add_bos_eos_tokens)
             trg_vectorized[target_name] = self.pad_sequence(trg_indices, max_words_count, self.pad_idx)
         
         return {
-            'src_vectorized':src_vectorized,
-            'subtokens_cnt':subtokens_cnt,
+            'tokens' : tokens,
             'letters':letters,
-            'trg_vectorized':trg_vectorized
+            'target':trg_vectorized
         }
+
+    # def vectorize(self, df_row:pd.Series, target_names:list[str], max_tokens_count:int, max_words_count:int, max_letters_count:int, add_bos_eos_tokens:bool=True)->dict[str, list[int]]:
+    #     source_tokens = df_row['source_words']
+    #     tokenized_source = []
+    #     subtokens_cnt = []
+    #     letters = [[self.pad_idx]*max_letters_count for _ in range(max_words_count)] # Изначально заполняем паддингом
+    #     for idx, token in enumerate(source_tokens):
+    #         tokenized = self.tokenizer.encode(token).tokens
+    #         tokenized_source.extend(tokenized)
+    #         subtokens_cnt.append(len(tokenized)) # Вычисляем количество субтокенов для каждого слова
+
+    #         cur_letters = list(token) # Получаем список букв слова
+    #         letters_indices = self.get_indices(cur_letters, self.letter_vocab, add_bos=False, add_eos=False) # Получаем индексы букв из словаря
+    #         letters_vectorized = self.pad_sequence(letters_indices, max_letters_count, self.pad_idx) # Заполняем пространство паддингом
+    #         letters[idx] = letters_vectorized
+
+    #     src_indices = self.get_indices(tokenized_source, self.src_vocab, add_bos=add_bos_eos_tokens, add_eos=add_bos_eos_tokens)
+    #     src_vectorized = self.pad_sequence(src_indices, max_tokens_count, self.pad_idx)
+    #     subtokens_cnt = self.pad_sequence(subtokens_cnt, max_words_count, self.pad_idx)
+    #     trg_vectorized = {}
+    #     for target_name in target_names:
+    #         trg_indices = self.get_indices(df_row[target_name], self.trg_vocabs[target_name], add_bos=add_bos_eos_tokens, add_eos=add_bos_eos_tokens)
+    #         trg_vectorized[target_name] = self.pad_sequence(trg_indices, max_words_count, self.pad_idx)
+        
+    #     return {
+    #         'src_vectorized':src_vectorized,
+    #         'subtokens_cnt':subtokens_cnt,
+    #         'letters':letters,
+    #         'trg_vectorized':trg_vectorized
+    #     }

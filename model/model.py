@@ -318,6 +318,9 @@ class MHAModel(nn.Module):
         word_mask = score_word_mask * word_mask # Получаем word_mask, где для каждого слова (dim=1) содержатся весовые коэффициенты его субтокенов (dim=2)
                                                 # Если субтокен не принадлежит слову, то значение весового коэффициента = 0
         return word_mask
+    
+    def subtokens_attention():
+        pass
 
     # Расчет внимания между буквами одного слова
     def letters_in_one_word_attention(self, letters:torch.Tensor, letters_padding_mask:torch.Tensor):
@@ -343,38 +346,27 @@ class MHAModel(nn.Module):
         
         return output
 
-    def forward(self, x:torch.Tensor, subtokens_cnt:torch.Tensor, letters:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
-        # x [B, extended_S]. Ясно, что extended_S = S+K, где K - количество дополнительных субтокенов, на которое было разбито слово
-        # letters [B, S, L], где L - количество символов
+    def forward(self, tokens:torch.Tensor, letters:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
+        # tokens [B, S, St], где St - токены одного слова
+        # letters [B, S, L], где L - буквы слова
 
-        # паддинг маска для субтокенов
-        subtokens_key_padding_mask = (x == self.padding_idx) # [B, extended_S]
-        # key_padding_mask для слов
-        words_key_padding_mask = (subtokens_cnt == self.padding_idx)  # [B, S]
-        # паддинг маска для символов
+        # паддинг маска для токенов
+        subtokens_key_padding_mask = (tokens == self.padding_idx) # [B, S, St]
+        # паддинг маска для букв
         letters_padding_mask = (letters == self.padding_idx)
         
         if self.word_representation != 'letters':
-            # Получаем маску размером [B, S, extended_S], где для каждого слова обозначены (1 | 0) его субтокены.
-            # Можно сказать, что word_mask - блочная диагональная матрица, где каждый блок это плотный вектор единиц
-            word_mask = self.subtokens_to_word_mask(subtokens_cnt, x.size(1))
             # Эмбеддингs
-            x = self.tokens_embedings(x)
+            tokens = self.tokens_embedings(tokens)
+            Bt, St, St, Et = tokens.size()
 
-            # Позиционное кодирование на уровне субтокенов одного слова
+            # Позиционное кодирование на уровне токенов одного слова
             if self.word_subtokens_pos_encoding_value is not None:
-                # Вызывая cumsum, получаем индексы токенов в предложении. Затем обнуляем позиции, которые изначально были нулем. Затем суммируем, чтобы получить матрицу [B, extended_S] с индексами токенов в слове
-                subtokens_in_word_indices = (word_mask.cumsum(dim=2) * word_mask).sum(dim=1)
-                word_subtokens_embed = self.word_subtokens_pos_encoding(subtokens_in_word_indices.to(dtype=torch.long))
-                x = x + word_subtokens_embed
-
-            # Позиционное кодирование на уровне токенов предложения
-            if self.tokens_pos_encoding_value is not None:
-                x = self.tokens_pos_encoding(x, subtokens_key_padding_mask)
+                tokens = self.word_subtokens_pos_encoding(tokens.to(dtype=torch.long), subtokens_key_padding_mask)
 
             # Маска агрегации субтокенов одного слова в целое взятием среднего
-            if self.subtokens_aggregation == 'mean':
-                word_mask = (word_mask / (word_mask.sum(dim=1, keepdim=True) + 1e-8)) * word_mask # Делим каждую строку на сумму элементов в ней, а затем применяем маскирование, чтобы обнулить ненулевые элементы
+            # if self.subtokens_aggregation == 'mean':
+            #     word_mask = (word_mask / (word_mask.sum(dim=1, keepdim=True) + 1e-8)) * word_mask # Делим каждую строку на сумму элементов в ней, а затем применяем маскирование, чтобы обнулить ненулевые элементы
 
             # Маска агрегации субтокенов одного слова в целое при помощи механизма внимания
             if self.subtokens_aggregation == 'attention':
@@ -433,3 +425,94 @@ class MHAModel(nn.Module):
                 logits[key] = nn.functional.softmax(logits[key] / self.temperature, dim=-1)
 
         return logits
+
+    # def forward(self, x:torch.Tensor, subtokens_cnt:torch.Tensor, letters:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
+    #     # x [B, extended_S]. Ясно, что extended_S = S+K, где K - количество дополнительных субтокенов, на которое было разбито слово
+    #     # letters [B, S, L], где L - количество символов
+
+    #     # паддинг маска для субтокенов
+    #     subtokens_key_padding_mask = (x == self.padding_idx) # [B, extended_S]
+    #     # key_padding_mask для слов
+    #     words_key_padding_mask = (subtokens_cnt == self.padding_idx)  # [B, S]
+    #     # паддинг маска для символов
+    #     letters_padding_mask = (letters == self.padding_idx)
+        
+    #     if self.word_representation != 'letters':
+    #         # Получаем маску размером [B, S, extended_S], где для каждого слова обозначены (1 | 0) его субтокены.
+    #         # Можно сказать, что word_mask - блочная диагональная матрица, где каждый блок это плотный вектор единиц
+    #         word_mask = self.subtokens_to_word_mask(subtokens_cnt, x.size(1))
+    #         # Эмбеддингs
+    #         x = self.tokens_embedings(x)
+
+    #         # Позиционное кодирование на уровне субтокенов одного слова
+    #         if self.word_subtokens_pos_encoding_value is not None:
+    #             # Вызывая cumsum, получаем индексы токенов в предложении. Затем обнуляем позиции, которые изначально были нулем. Затем суммируем, чтобы получить матрицу [B, extended_S] с индексами токенов в слове
+    #             subtokens_in_word_indices = (word_mask.cumsum(dim=2) * word_mask).sum(dim=1)
+    #             word_subtokens_embed = self.word_subtokens_pos_encoding(subtokens_in_word_indices.to(dtype=torch.long))
+    #             x = x + word_subtokens_embed
+
+    #         # Позиционное кодирование на уровне токенов предложения
+    #         if self.tokens_pos_encoding_value is not None:
+    #             x = self.tokens_pos_encoding(x, subtokens_key_padding_mask)
+
+    #         # Маска агрегации субтокенов одного слова в целое взятием среднего
+    #         if self.subtokens_aggregation == 'mean':
+    #             word_mask = (word_mask / (word_mask.sum(dim=1, keepdim=True) + 1e-8)) * word_mask # Делим каждую строку на сумму элементов в ней, а затем применяем маскирование, чтобы обнулить ненулевые элементы
+
+    #         # Маска агрегации субтокенов одного слова в целое при помощи механизма внимания
+    #         if self.subtokens_aggregation == 'attention':
+    #             word_mask = self.make_word_mask_via_attention(x, word_mask)
+
+    #         # Агрегация субтокенов одного слова до MHA
+    #         x = torch.bmm(word_mask, x)  # [B, S, E]
+    #         # Позиционное кодирование на уровне слов
+    #         if self.words_pos_encoding_value is not None:
+    #             x = self.words_pos_encoding(x, words_key_padding_mask) # [B, S, E]
+
+
+    #     if self.word_representation != 'tokens':
+    #         # Эмбеддингs
+    #         letters_embed = self.letters_embeddings(letters) # [B, S, L, Le]
+    #         B, S, L, E = letters_embed.size()
+    #         # Позиционное кодирование для букв слова
+    #         # Используем reshape для соответсвия размерностей при использовании ранее написанных функций
+    #         letters_padding_mask = letters_padding_mask.reshape(B*S, L)
+    #         letters_embed = letters_embed.reshape(B*S, L, E)
+    #         if self.letters_pos_encoding_value is not None:
+    #             letters_embed = self.letters_in_word_pos_encoding(letters_embed, letters_padding_mask)
+
+    #         # внимание для букв слова
+    #         letters_embed = self.letters_in_one_word_attention(letters_embed, letters_padding_mask) # [B, S, L, Le]
+
+    #         # Конкатенируем векторные представления букв одного слова
+    #         letters_embed = letters_embed.reshape(B, S, L*E)
+
+    #         # Проход через Char_FF слой для буквенного представления
+    #         letters_embed = letters_embed + self.char_ff(letters_embed) # [B, S, L*Le]
+
+    #     if self.word_representation == 'both':
+    #         # Конкатенируем векторные представления букв и токенов
+    #         x = torch.cat([x, letters_embed], dim=2) # [B, S, E + L*Le]
+    #     elif self.word_representation == 'letters':
+    #         x = letters_embed
+
+    #     # Преобразование к размерности main_attention
+    #     if x.size(-1) != self.main_attention_dim:
+    #         x = self.embed_to_encod_proj(x)  # [B, S, D]
+    #     # Проход через энкодер
+    #     for layer in range(self.main_num_layers):
+    #         x = self.encoder_stack[layer](x, words_key_padding_mask)
+
+    #     # Нормализация
+    #     x = self.norm(x)
+        
+    #     # Классификация
+    #     logits = {}
+    #     for key, value in self.classifiers_names_params.items():
+    #         logits[key] = self.final_classifiers[key](x)  # [B, S, num_classes_key]
+
+    #     if apply_softmax:
+    #         for key in logits:
+    #             logits[key] = nn.functional.softmax(logits[key] / self.temperature, dim=-1)
+
+    #     return logits
