@@ -5,3 +5,4 @@ train.py
 model_hyperparams.json
 model_params.pt
 .gitignore
+*old*.py
