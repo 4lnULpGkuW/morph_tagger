@@ -103,14 +103,14 @@ class Vectorizer:
             letters[idx] = self.pad_sequence(letters_indices, max_letters_count, self.pad_idx)
         return letters
 
-    def vectorize(self, df_row: pd.Series, target_names: list[str], max_tokens_count: int, max_words_count: int, max_letters_count: int, add_bos_eos_tokens: bool = True) -> dict[str, list[int]]:
+    def vectorize(self, df_row: pd.Series, target_names: list[str], max_subtokens_count: int, max_words_count: int, max_letters_count: int, add_bos_eos_tokens: bool = True) -> dict[str, list[int]]:
         """
         Основной метод векторизации, преобразует строку данных в числовые представления.
         
         Args:
             df_row (pd.Series): Строка DataFrame с данными
             target_names (list[str]): Список имен целевых столбцов
-            max_tokens_count (int): Максимальное количество токенов на слово
+            max_subtokens_count (int): Максимальное количество токенов на слово
             max_words_count (int): Максимальное количество слов
             max_letters_count (int): Максимальное количество букв на слово
             add_bos_eos_tokens (bool, optional): Добавлять BOS/EOS токены. По умолчанию True
@@ -124,13 +124,13 @@ class Vectorizer:
         source_words = df_row['source_words']
         
         if self.word_representation == 'tokens':
-            tokens = self.vectorize_tokens(max_tokens_count, max_words_count, source_words)
+            tokens = self.vectorize_tokens(max_subtokens_count, max_words_count, source_words)
             letters = None
         elif self.word_representation == 'letters':
             tokens = None
             letters = self.vectorize_letters(max_letters_count, max_words_count, source_words)
         else:
-            tokens = self.vectorize_tokens(max_tokens_count, max_words_count, source_words)
+            tokens = self.vectorize_tokens(max_subtokens_count, max_words_count, source_words)
             letters = self.vectorize_letters(max_letters_count, max_words_count, source_words)
 
         trg_vectorized = {}

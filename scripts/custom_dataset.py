@@ -4,7 +4,7 @@ from scripts.vectorizer import Vectorizer
 
 class CustomDataset:
     def __init__(self, vectorizer: Vectorizer, train_df, target_names: list[str],
-                 max_tokens_count: int, max_words_count: int, max_letters_count: int,
+                 max_subtokens_count: int, max_words_count: int, max_letters_count: int,
                  add_bos_eos_tokens: bool = True, test_df=None, valid_df=None):
         """
         Создаёт Dataset для обучения/инференса.
@@ -17,8 +17,8 @@ class CustomDataset:
             DataFrame с обучающим набором данных.
         target_names : list[str]
             Список названий целевых меток.
-        max_tokens_count : int
-            Максимальное количество токенов.
+        max_subtokens_count : int
+            Максимальное количество токенов слова.
         max_words_count : int
             Максимальное количество слов.
         max_letters_count : int
@@ -35,7 +35,7 @@ class CustomDataset:
         self._valid_df = valid_df
         self.vectorizer = vectorizer
         self.target_names = target_names
-        self.max_tokens_count = max_tokens_count
+        self.max_subtokens_count = max_subtokens_count
         self.max_words_count = max_words_count
         self.max_letters_count = max_letters_count
         self.add_bos_eos_tokens = add_bos_eos_tokens
@@ -86,7 +86,7 @@ class CustomDataset:
         row = self.cw_df.iloc[index]
         vectorized_dict = self.vectorizer.vectorize(
             row, self.target_names,
-            max_tokens_count=self.max_tokens_count,
+            max_subtokens_count=self.max_subtokens_count,
             max_words_count=self.max_words_count,
             max_letters_count=self.max_letters_count,
             add_bos_eos_tokens=self.add_bos_eos_tokens
