@@ -1,31 +1,25 @@
 import json
 
+
 class Vocabulary:
     """
     Класс для работы со словарём токен‑индекс.
-    
     Внутри хранит два отображения: token->idx и idx->token, а также специальные токены (MASK, UNK, BOS, EOS)
     """
-    def __init__(self, token_to_idx:dict=None, bos_token:str='<BOS>', eos_token:str='<EOS>', pad_token:str='<PAD>', mask_token:str='<MASK>', unk_token='<UNK>', add_bos_eos_tokens:bool=True):
+    def __init__(self, token_to_idx: dict = None, bos_token: str = '<BOS>', eos_token: str = '<EOS>', 
+                 pad_token: str = '<PAD>', mask_token: str = '<MASK>', unk_token='<UNK>', 
+                 add_bos_eos_tokens: bool = True):
         """
         Инициализирует словарь.
 
-        Parameters
-        ----------
-        token_to_idx : dict, optional
-            Предоставляемый словарь токен : индекс. Если None, словарь создаётся пустым.
-        bos_token : str, default '<BOS>'
-            Токен начала предложения.
-        eos_token : str, default '<EOS>'
-            Токен окончания предложения.
-        pad_token : str, default '<PAD>'
-            Токен паддинга для заполнения недостающих позиций.
-        mask_token : str, default '<MASK>'
-            Токен маскировки.
-        unk_token : str, default '<UNK>'
-            Токен неизвестного слова.
-        add_bos_eos_tokens : bool, default True
-            Если True, добавляются BOS и EOS в словарь.
+        Args:
+            token_to_idx: Существующий словарь токен->индекс (опционально)
+            bos_token: Токен начала последовательности
+            eos_token: Токен конца последовательности
+            pad_token: Токен заполнения
+            mask_token: Токен маски
+            unk_token: Токен неизвестного слова
+            add_bos_eos_tokens: Флаг добавления BOS/EOS токенов в словарь
         """
         self.add_bos_eos_tokens = add_bos_eos_tokens
         self.bos_token = bos_token
@@ -47,19 +41,15 @@ class Vocabulary:
                 self.bos_idx = self.add_token(bos_token)
                 self.eos_idx = self.add_token(eos_token)
 
-    def add_token(self, token:str)->int:
+    def add_token(self, token: str) -> int:
         """
-        Добавляет токен в словарь. Возвращает индекс токена.
+        Добавляет токен в словарь.
 
-        Parameters
-        ----------
-        token : str
-            Токен, который необходимо добавить.
+        Args:
+            token: Токен для добавления
 
-        Returns
-        -------
-        int
-            Индекс токена в словаре.
+        Returns:
+            Индекс добавленного или существующего токена
         """
         if token not in self.token_to_idx:
             idx = len(self.token_to_idx)
@@ -68,36 +58,53 @@ class Vocabulary:
             return idx
         else:
             return self.token_to_idx[token]
-        
-    def add_tokens(self, tokens:list[str])->list[int]:
+
+    def add_tokens(self, tokens: list[str]) -> list[int]:
         """
-        Добавляет несколько токенов в словарь и возвращает их индексы.
+        Добавляет несколько токенов в словарь.
 
-        Parameters
-        ----------
-        tokens : list[str]
-            Список токенов для добавления.
+        Args:
+            tokens: Список токенов для добавления
 
-        Returns
-        -------
-        list[int]
-            Индексы соответствующих токенов.
+        Returns:
+            Список индексов добавленных токенов
         """
         return [self.add_token(token) for token in tokens]
-    
-    def get_token(self, index:int) -> str:
+
+    def get_token(self, index: int) -> str:
+        """
+        Возвращает токен по индексу.
+
+        Args:
+            index: Индекс токена
+
+        Returns:
+            Токен или unk_token, если индекс не найден
+        """
         if index in self.idx_to_token:
             return self.idx_to_token[index]
         return self.unk_token
 
-    def get_index(self, token:str) -> int:
+    def get_index(self, token: str) -> int:
+        """
+        Возвращает индекс по токену.
+
+        Args:
+            token: Токен для поиска
+
+        Returns:
+            Индекс токена или unk_idx, если токен не найден
+        """
         if token in self.token_to_idx:
             return self.token_to_idx[token]
         return self.unk_idx
-        
+
     def to_serializable(self) -> dict:
         """
         Возвращает словарь, пригодный для сериализации (JSON).
+
+        Returns:
+            Словарь с данными для сериализации
         """
         return {
             'token_to_idx': self.token_to_idx,
@@ -106,33 +113,27 @@ class Vocabulary:
             'pad_token': self.pad_token,
             'mask_token': self.mask_token,
             'unk_token': self.unk_token,
-            'add_auxiliary_tokens': self.add_bos_eos_tokens}
+            'add_bos_eos_tokens': self.add_bos_eos_tokens}
 
     @classmethod
     def from_serializable(cls, serializable: dict):
         """
         Создаёт объект Vocabulary из сериализованного представления.
 
-        Parameters
-        ----------
-        serializable : dict
-            Сериализованный словарь.
+        Args:
+            serializable: Словарь с сериализованными данными
 
-        Returns
-        -------
-        Vocabulary
-            Новый экземпляр класса.
+        Returns:
+            Экземпляр Vocabulary
         """
         return cls(**serializable)
 
     def to_json(self, filepath: str):
         """
-        Сохраняет словарь в JSON‑файл.
+        Сохраняет словарь в JSON-файл.
 
-        Parameters
-        ----------
-        filepath : str
-            Путь к файлу для сохранения.
+        Args:
+            filepath: Путь к файлу для сохранения
         """
         with open(filepath, 'w', encoding='utf-8') as file:
             json.dump(self.to_serializable(), file, ensure_ascii=False)
@@ -140,20 +141,17 @@ class Vocabulary:
     @classmethod
     def from_json(cls, filepath: str):
         """
-        Загружает словарь из JSON‑файла.
+        Загружает словарь из JSON-файла.
 
-        Parameters
-        ----------
-        filepath : str
-            Путь к файлу для загрузки.
+        Args:
+            filepath: Путь к файлу для загрузки
 
-        Returns
-        -------
-        Vocabulary
-            Новый экземпляр класса.
+        Returns:
+            Экземпляр Vocabulary
         """
         with open(filepath, 'r', encoding='utf-8') as file:
             return cls.from_serializable(json.load(file))
-        
-    def __len__(self)->int:
+
+    def __len__(self) -> int:
+        """Возвращает размер словаря."""
         return len(self.token_to_idx)
