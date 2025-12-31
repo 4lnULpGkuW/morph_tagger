@@ -96,13 +96,9 @@ class CustomDataset:
         for key, value in vectorized_dict['target'].items():
             vectorized[key] = torch.tensor(value)
 
-        vectorized['tokens'] = (
-            torch.tensor(vectorized_dict['tokens'])
-            if vectorized_dict['tokens'] is not None else None
-        )
-        vectorized['letters'] = (
-            torch.tensor(vectorized_dict['letters'])
-            if vectorized_dict['letters'] is not None else None
-        )
+        if vectorized_dict['tokens'] is not None:
+            vectorized['tokens'] = torch.tensor(vectorized_dict['tokens'])
+        if vectorized_dict['letters'] is not None:
+            vectorized['letters'] = torch.tensor(vectorized_dict['letters'])
 
         return vectorized
