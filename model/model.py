@@ -46,18 +46,17 @@ class EncoderBlock(nn.Module):
         return x + encoder_out
 
 class MHAModel(nn.Module):
-    def __init__(self, max_words_count:int, max_tokens_count:int, max_word_subtokens_count:int, max_letters_count:int,
+    def __init__(self, max_words_count:int, max_word_subtokens_count:int, max_letters_count:int,
                 letters_num_embeddings:int, tokens_num_embeddings:int, tokens_embedding_dim:int, letters_embeddings_dim:int,
                 main_attention_dim:int, main_num_heads:int, main_num_layers:int, classifier_ff_hidden_dim:int, main_encoder_ff_dim:int,
-                classifiers_names_params:dict[str, int], words_pos_encoding:str, tokens_pos_encoding:str, word_subtokens_pos_encoding:str, letters_in_word_pos_encoding:str,
-                aggregation_moment:str, letters_in_word_attention_dim:int,
-                dropout:float, temperature:float, batch_first:bool, word_representation:str, init_weights:bool=True, bias:bool=True, padding_idx:int=0):
+                classifiers_names_params:dict[str, int], words_pos_encoding:str, word_subtokens_pos_encoding:str,\
+                letters_in_word_pos_encoding:str, letters_in_word_attention_dim:int, dropout:float, temperature:float,\
+                batch_first:bool, word_representation:str, init_weights:bool=True, bias:bool=True, padding_idx:int=0):
         '''
         Модель для морфологического анализа с использованием механизма внимания.
         
         Args:
             max_words_count: Максимальное количество слов в предложении
-            max_tokens_count: Максимальное количество токенов в предложении
             max_word_subtokens_count: Максимальное количество субтокенов в слове
             max_letters_count: Максимальное количество букв в слове
             letters_num_embeddings: Размер словаря для буквенных эмбеддингов
@@ -80,14 +79,13 @@ class MHAModel(nn.Module):
             temperature: Температура для softmax
             batch_first: Если True, то входной тензор имеет размерность [batch, seq_len, features]
             word_representation: Способ представления слова ('tokens', 'letters' или 'both')
-            init_weights: Инициализировать веса модели
+            init_weights: Инициализировать ли веса модели
             bias: Использовать bias в линейных слоях
             padding_idx: Индекс паддинга
         '''
         super().__init__()
 
         self.max_words_count = max_words_count
-        self.max_tokens_count = max_tokens_count
         self.max_word_subtokens_count = max_word_subtokens_count
         self.max_letters_count = max_letters_count
         self.letters_num_embeddings = letters_num_embeddings
@@ -102,7 +100,6 @@ class MHAModel(nn.Module):
         self.main_encoder_ff_dim = main_encoder_ff_dim
         self.classifiers_names_params = classifiers_names_params
         self.words_pos_encoding_value = words_pos_encoding
-        self.tokens_pos_encoding_value = tokens_pos_encoding
         self.word_subtokens_pos_encoding_value = word_subtokens_pos_encoding
         self.letters_pos_encoding_value = letters_in_word_pos_encoding
         self.letters_in_word_attention_dim = letters_in_word_attention_dim
@@ -137,14 +134,14 @@ class MHAModel(nn.Module):
             if words_pos_encoding == 'sin':
                 self.words_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_words_count, batch_first)
             elif words_pos_encoding == 'learnable':
-                self.words_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_words_count, batch_first, padding_idx)
+                self.words_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_words_count, padding_idx)
             else:
                 self.words_pos_encoding = None
                 
             if word_subtokens_pos_encoding == 'sin':
                 self.word_subtokens_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_word_subtokens_count, batch_first)
             elif word_subtokens_pos_encoding == 'learnable':
-                self.word_subtokens_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_word_subtokens_count, batch_first, padding_idx)
+                self.word_subtokens_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_word_subtokens_count, padding_idx)
             else:
                 self.word_subtokens_pos_encoding = None
 
@@ -177,7 +174,7 @@ class MHAModel(nn.Module):
             if letters_in_word_pos_encoding == 'sin':
                 self.letters_in_word_pos_encoding = SinusoidalPositionalEncoding(letters_embeddings_dim, max_letters_count, batch_first)
             elif letters_in_word_pos_encoding == 'learnable':
-                self.letters_in_word_pos_encoding = LearnablePositionalEncoding(letters_embeddings_dim, max_letters_count, batch_first, padding_idx)
+                self.letters_in_word_pos_encoding = LearnablePositionalEncoding(letters_embeddings_dim, max_letters_count, padding_idx)
             else:
                 self.letters_in_word_pos_encoding = None
 
@@ -298,7 +295,6 @@ class MHAModel(nn.Module):
         """
         return {
             'max_words_count': self.max_words_count,
-            'max_tokens_count': self.max_tokens_count,
             'max_word_subtokens_count': self.max_word_subtokens_count,
             'max_letters_count': self.max_letters_count,
             'letters_num_embeddings': self.letters_num_embeddings,
@@ -386,87 +382,86 @@ class MHAModel(nn.Module):
         
         return output
 
-def forward(self, tokens:torch.Tensor, letters:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
-        """Прямой проход модели"""
-        # tokens [B, S, T], letters [B, S, L]
-        
-        # Создание масок
-        tokens_key_padding_mask = (tokens == self.padding_idx)  # [B, S, T]
-        letters_padding_mask = (letters == self.padding_idx)    # [B, S, L]
-        words_padding_mask = tokens_key_padding_mask.all(dim=-1)  # [B, S] - слово padding, если все его токены padding
-        
-        if self.word_representation != 'letters':
-            # Эмбеддинг токенов
-            tokens_embed = self.tokens_embedings(tokens)  # [B, S, T, Et]
+    def forward(self, tokens:torch.Tensor, letters:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
+            # tokens [B, S, T], letters [B, S, L]
             
-            B, S, T, Et = tokens_embed.size()
-            tokens_embed = tokens_embed.reshape(B*S, T, Et)
-            tokens_key_padding_mask_flat = tokens_key_padding_mask.reshape(B*S, T)
-
-            # Позиционное кодирование на уровне субтокенов
-            if self.word_subtokens_pos_encoding is not None:
-                tokens_embed = self.word_subtokens_pos_encoding(tokens_embed, tokens_key_padding_mask_flat)
-
-            # Внимание между субтокенами
-            tokens_processed = self.subtokens_attention(tokens_embed, tokens_key_padding_mask_flat)
+            # Создание масок
+            tokens_key_padding_mask = (tokens == self.padding_idx)  # [B, S, T]
+            letters_padding_mask = (letters == self.padding_idx)    # [B, S, L]
+            words_padding_mask = tokens_key_padding_mask.all(dim=-1)  # [B, S] - слово padding, если все его токены padding
             
-            # Агрегация (суммирование по субтокенам слова)
-            tokens_aggregated = tokens_processed.sum(dim=1)  # [B*S, Et]
-            tokens_aggregated = tokens_aggregated.reshape(B, S, Et)  # [B, S, Et]
+            if self.word_representation != 'letters':
+                # Эмбеддинг токенов
+                tokens_embed = self.tokens_embedings(tokens)  # [B, S, T, Et]
+                
+                B, S, T, Et = tokens_embed.size()
+                tokens_embed = tokens_embed.reshape(B*S, T, Et)
+                tokens_key_padding_mask_flat = tokens_key_padding_mask.reshape(B*S, T)
 
-            # Позиционное кодирование на уровне слов
-            if self.words_pos_encoding is not None:
-                tokens_aggregated = self.words_pos_encoding(tokens_aggregated, words_padding_mask)
+                # Позиционное кодирование на уровне субтокенов
+                if self.word_subtokens_pos_encoding is not None:
+                    tokens_embed = self.word_subtokens_pos_encoding(tokens_embed, tokens_key_padding_mask_flat)
+
+                # Внимание между субтокенами
+                tokens_processed = self.subtokens_attention(tokens_embed, tokens_key_padding_mask_flat)
+                
+                # Агрегация (суммирование по субтокенам слова)
+                tokens_aggregated = tokens_processed.sum(dim=1)  # [B*S, Et]
+                tokens_aggregated = tokens_aggregated.reshape(B, S, Et)  # [B, S, Et]
+
+                # Позиционное кодирование на уровне слов
+                if self.words_pos_encoding is not None:
+                    tokens_aggregated = self.words_pos_encoding(tokens_aggregated, words_padding_mask)
+                
+                x = tokens_aggregated
+
+            if self.word_representation != 'tokens':
+                # Эмбеддинг букв
+                letters_embed = self.letters_embeddings(letters)  # [B, S, L, Le]
+                B, S, L, E = letters_embed.size()
+                
+                # Позиционное кодирование для букв
+                letters_padding_mask_flat = letters_padding_mask.reshape(B*S, L)
+                letters_embed = letters_embed.reshape(B*S, L, E)
+                
+                if self.letters_in_word_pos_encoding is not None:
+                    letters_embed = self.letters_in_word_pos_encoding(letters_embed, letters_padding_mask_flat)
+
+                # Внимание для букв
+                letters_processed = self.letters_in_one_word_attention(letters_embed, letters_padding_mask_flat)
+                
+                # Конкатенация буквенных представлений
+                letters_processed = letters_processed.reshape(B, S, L*E)
+                
+                # FF слой для букв
+                letters_ff = self.char_ff(letters_processed)
+                letters_aggregated = letters_processed + letters_ff  # Residual connection
+                letters_aggregated = letters_aggregated * (~words_padding_mask).unsqueeze(-1).float()
+
+            # Объединение представлений в зависимости от word_representation
+            if self.word_representation == 'both':
+                x = torch.cat([x, letters_aggregated], dim=-1)  # [B, S, Et + L*E]
+            elif self.word_representation == 'letters':
+                x = letters_aggregated
+
+            # Проекция к размерности main_attention_dim
+            if x.size(-1) != self.main_attention_dim:
+                x = self.embed_to_encod_proj(x)  # [B, S, D]
+
+            # Проход через стек энкодеров
+            for encoder in self.encoder_stack:
+                x = encoder(x, words_padding_mask)
+
+            # Финальная нормализация
+            x = self.norm(x)
             
-            x = tokens_aggregated
+            # Классификация
+            logits = {}
+            for key in self.classifiers_names_params:
+                logits[key] = self.final_classifiers[key](x)
 
-        if self.word_representation != 'tokens':
-            # Эмбеддинг букв
-            letters_embed = self.letters_embeddings(letters)  # [B, S, L, Le]
-            B, S, L, E = letters_embed.size()
-            
-            # Позиционное кодирование для букв
-            letters_padding_mask_flat = letters_padding_mask.reshape(B*S, L)
-            letters_embed = letters_embed.reshape(B*S, L, E)
-            
-            if self.letters_in_word_pos_encoding is not None:
-                letters_embed = self.letters_in_word_pos_encoding(letters_embed, letters_padding_mask_flat)
+            if apply_softmax:
+                for key in logits:
+                    logits[key] = nn.functional.softmax(logits[key] / self.temperature, dim=-1)
 
-            # Внимание для букв
-            letters_processed = self.letters_in_one_word_attention(letters_embed, letters_padding_mask_flat)
-            
-            # Конкатенация буквенных представлений
-            letters_processed = letters_processed.reshape(B, S, L*E)
-            
-            # FF слой для букв
-            letters_ff = self.char_ff(letters_processed)
-            letters_aggregated = letters_processed + letters_ff  # Residual connection
-            letters_aggregated = letters_aggregated * (~words_padding_mask).unsqueeze(-1).float()
-
-        # Объединение представлений в зависимости от word_representation
-        if self.word_representation == 'both':
-            x = torch.cat([x, letters_aggregated], dim=-1)  # [B, S, Et + L*E]
-        elif self.word_representation == 'letters':
-            x = letters_aggregated
-
-        # Проекция к размерности main_attention_dim
-        if x.size(-1) != self.main_attention_dim:
-            x = self.embed_to_encod_proj(x)  # [B, S, D]
-
-        # Проход через стек энкодеров
-        for encoder in self.encoder_stack:
-            x = encoder(x, words_padding_mask)
-
-        # Финальная нормализация
-        x = self.norm(x)
-        
-        # Классификация
-        logits = {}
-        for key in self.classifiers_names_params:
-            logits[key] = self.final_classifiers[key](x)
-
-        if apply_softmax:
-            for key in logits:
-                logits[key] = nn.functional.softmax(logits[key] / self.temperature, dim=-1)
-
-        return logits
+            return logits
