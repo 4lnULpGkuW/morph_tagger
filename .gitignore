@@ -1,6 +1,6 @@
 .venv*/
 __pycache__/
-.venv.linux/
+.venv*/
 data/
 train.py
 *.json
@@ -8,4 +8,5 @@ train.py
 model_params.pt
 .gitignore
 *old*.py
-.env*
+.env.linux
+.env.win
