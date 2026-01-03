@@ -1,8 +1,11 @@
-.venv/
+.venv*/
 __pycache__/
+.venv.linux/
 data/
 train.py
-model_hyperparams.json
+*.json
+*.pt
 model_params.pt
 .gitignore
 *old*.py
+.env*
