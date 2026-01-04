@@ -3,3 +3,5 @@ scikit-learn
 tokenizers
 conllu
 fastparquet
+dotenv
+regex
