@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import math
-from model.positional_encoding import LearnablePositionalEncoding, SinusoidalPositionalEncoding
+from model.positional_encoding import LearnablePositionalEncoding, SinusoidalPositionalEncoding, RoPE
 
 
 class EncoderBlock(nn.Module):
@@ -50,8 +50,8 @@ class MHAModel(nn.Module):
                 letters_num_embeddings:int, tokens_num_embeddings:int, tokens_embedding_dim:int, letters_embeddings_dim:int,
                 main_attention_dim:int, main_num_heads:int, main_num_layers:int, classifier_ff_hidden_dim:int, main_encoder_ff_dim:int,
                 classifiers_names_params:dict[str, int], words_pos_encoding:str, word_subtokens_pos_encoding:str,\
-                letters_in_word_pos_encoding:str, letters_in_word_attention_dim:int, dropout:float, temperature:float,\
-                batch_first:bool, word_representation:str, init_weights:bool=True, bias:bool=True, padding_idx:int=0):
+                letters_in_word_pos_encoding:str, rope_base:int, letters_in_word_attention_dim:int, dropout:float, temperature:float,\
+                batch_first:bool, word_representation:str, init_weights:bool=True, bias:bool=True, padding_idx:int=0, device:str='cpu'):
         '''
         Модель для морфологического анализа с использованием механизма внимания.
         
@@ -102,6 +102,7 @@ class MHAModel(nn.Module):
         self.words_pos_encoding_value = words_pos_encoding
         self.word_subtokens_pos_encoding_value = word_subtokens_pos_encoding
         self.letters_pos_encoding_value = letters_in_word_pos_encoding
+        self.rope_base = rope_base
         self.letters_in_word_attention_dim = letters_in_word_attention_dim
         self.dropout = dropout
         self.temperature = temperature
@@ -110,6 +111,7 @@ class MHAModel(nn.Module):
         self.init_weights = init_weights
         self.bias = bias
         self.padding_idx = padding_idx
+        self.device = device
 
         # Эмбеддинги и механизмы внимания в зависимости от представления слова
         if word_representation != 'letters':
@@ -132,16 +134,18 @@ class MHAModel(nn.Module):
 
             # Позиционное кодирование
             if words_pos_encoding == 'sin':
-                self.words_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_words_count, batch_first)
+                self.words_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_words_count, device)
             elif words_pos_encoding == 'learnable':
-                self.words_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_words_count, padding_idx)
+                self.words_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_words_count, padding_idx, device)
             else:
                 self.words_pos_encoding = None
                 
             if word_subtokens_pos_encoding == 'sin':
-                self.word_subtokens_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_word_subtokens_count, batch_first)
+                self.word_subtokens_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_word_subtokens_count, device)
             elif word_subtokens_pos_encoding == 'learnable':
-                self.word_subtokens_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_word_subtokens_count, padding_idx)
+                self.word_subtokens_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_word_subtokens_count, padding_idx, device)
+            elif word_subtokens_pos_encoding == 'rope':
+                self.word_subtokens_pos_encoding = RoPE(tokens_embedding_dim, max_word_subtokens_count, rope_base, device)
             else:
                 self.word_subtokens_pos_encoding = None
 
@@ -172,9 +176,11 @@ class MHAModel(nn.Module):
 
             # Позиционное кодирование для букв
             if letters_in_word_pos_encoding == 'sin':
-                self.letters_in_word_pos_encoding = SinusoidalPositionalEncoding(letters_embeddings_dim, max_letters_count, batch_first)
+                self.letters_in_word_pos_encoding = SinusoidalPositionalEncoding(letters_embeddings_dim, max_letters_count, device)
             elif letters_in_word_pos_encoding == 'learnable':
-                self.letters_in_word_pos_encoding = LearnablePositionalEncoding(letters_embeddings_dim, max_letters_count, padding_idx)
+                self.letters_in_word_pos_encoding = LearnablePositionalEncoding(letters_embeddings_dim, max_letters_count, padding_idx, device)
+            elif letters_in_word_pos_encoding == 'rope':
+                self.letters_in_word_pos_encoding = RoPE(letters_embeddings_dim, max_letters_count, rope_base, device)
             else:
                 self.letters_in_word_pos_encoding = None
 
@@ -189,8 +195,7 @@ class MHAModel(nn.Module):
         # Стек энкодеров
         self.encoder_stack = nn.ModuleList([
             EncoderBlock(main_attention_dim, main_num_heads, dropout, main_encoder_ff_dim, bias, batch_first) 
-            for _ in range(main_num_layers)
-        ])
+            for _ in range(main_num_layers)])
         self.norm = nn.LayerNorm(main_attention_dim)
 
         # Классификаторы
@@ -203,7 +208,7 @@ class MHAModel(nn.Module):
                 for key, value in classifiers_names_params.items()})
 
         if init_weights:
-            print('Инициализация весов модели')
+            print('Используется "умная" инициализация весов модели')
             self._init_weights()
 
     def _init_weights(self):
@@ -310,6 +315,7 @@ class MHAModel(nn.Module):
             'words_pos_encoding': self.words_pos_encoding_value,
             'word_subtokens_pos_encoding': self.word_subtokens_pos_encoding_value,
             'letters_in_word_pos_encoding': self.letters_pos_encoding_value,
+            'rope_base' : self.rope_base,
             'letters_in_word_attention_dim': self.letters_in_word_attention_dim,
             'dropout': self.dropout,
             'temperature': self.temperature,
@@ -328,6 +334,10 @@ class MHAModel(nn.Module):
             self.subtokens_q(tokens), 
             self.subtokens_k(tokens), 
             self.subtokens_v(tokens))
+        
+        if self.word_subtokens_pos_encoding_value == 'rope':
+            subtokens_q = self.word_subtokens_pos_encoding(subtokens_q)
+            subtokens_k = self.word_subtokens_pos_encoding(subtokens_k)
         
         # Вычисление scores внимания
         score = torch.matmul(subtokens_q, subtokens_k.transpose(-2, -1)) * self.one_over_tokens_dim_sqrt
@@ -358,6 +368,10 @@ class MHAModel(nn.Module):
             self.letters_q(letters), 
             self.letters_k(letters), 
             self.letters_v(letters))
+        
+        if self.letters_pos_encoding_value == 'rope':
+            letters_q = self.letters_in_word_pos_encoding(letters_q)
+            letters_k = self.letters_in_word_pos_encoding(letters_k)
         
         # attention scores
         score = torch.matmul(letters_q, letters_k.transpose(-2, -1)) * self.one_over_letters_dim_sqrt
@@ -399,7 +413,7 @@ class MHAModel(nn.Module):
                 tokens_key_padding_mask_flat = tokens_key_padding_mask.reshape(B*S, T)
 
                 # Позиционное кодирование на уровне субтокенов
-                if self.word_subtokens_pos_encoding is not None:
+                if (self.word_subtokens_pos_encoding is not None) and (self.word_subtokens_pos_encoding_value != 'rope'):
                     tokens_embed = self.word_subtokens_pos_encoding(tokens_embed, tokens_key_padding_mask_flat)
 
                 # Внимание между субтокенами
@@ -424,7 +438,7 @@ class MHAModel(nn.Module):
                 letters_padding_mask_flat = letters_padding_mask.reshape(B*S, L)
                 letters_embed = letters_embed.reshape(B*S, L, E)
                 
-                if self.letters_in_word_pos_encoding is not None:
+                if (self.letters_in_word_pos_encoding is not None) and (self.letters_pos_encoding_value != 'rope'):
                     letters_embed = self.letters_in_word_pos_encoding(letters_embed, letters_padding_mask_flat)
 
                 # Внимание для букв
