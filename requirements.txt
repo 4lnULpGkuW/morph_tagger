@@ -5,3 +5,4 @@ conllu
 fastparquet
 dotenv
 regex
+ipykernel
