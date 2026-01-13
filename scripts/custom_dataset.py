@@ -3,7 +3,7 @@ from scripts.vectorizer import Vectorizer
 
 
 class CustomDataset:
-    def __init__(self, vectorizer: Vectorizer, train_df, target_names: list[str],
+    def __init__(self, train_df, target_names: list[str],
                  max_subtokens_count: int, max_words_count: int, max_letters_count: int,
                  add_bos_eos_tokens: bool = True, test_df=None, valid_df=None):
         """
@@ -33,12 +33,12 @@ class CustomDataset:
         self._train_df = train_df
         self._test_df = test_df
         self._valid_df = valid_df
-        self.vectorizer = vectorizer
+        # self.vectorizer = vectorizer
         self.target_names = target_names
         self.max_subtokens_count = max_subtokens_count
         self.max_words_count = max_words_count
         self.max_letters_count = max_letters_count
-        self.add_bos_eos_tokens = add_bos_eos_tokens
+        # self.add_bos_eos_tokens = add_bos_eos_tokens
         self.set_dataframe_split('train')
 
     def set_dataframe_split(self, split: str):
@@ -83,22 +83,11 @@ class CustomDataset:
             - 'tokens': тензор токенов или None
             - 'letters': тензор букв или None
         """
-        row = self.cw_df.iloc[index]
-        vectorized_dict = self.vectorizer.vectorize(
-            row, self.target_names,
-            max_subtokens_count=self.max_subtokens_count,
-            max_words_count=self.max_words_count,
-            max_letters_count=self.max_letters_count,
-            add_bos_eos_tokens=self.add_bos_eos_tokens
-        )
+        df_row = self.cw_df.iloc[index]
 
         vectorized = {}
-        for key, value in vectorized_dict['target'].items():
-            vectorized[key] = torch.tensor(value)
-
-        if vectorized_dict['tokens'] is not None:
-            vectorized['tokens'] = torch.tensor(vectorized_dict['tokens'])
-        if vectorized_dict['letters'] is not None:
-            vectorized['letters'] = torch.tensor(vectorized_dict['letters'])
+        for target_name in self.target_names:
+            vectorized[target_name] = torch.tensor(df_row[f'{target_name}_ids'])
+        vectorized['input_ids'] = torch.tensor(df_row['input_ids'])
 
         return vectorized

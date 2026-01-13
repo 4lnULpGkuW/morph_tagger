@@ -2,19 +2,17 @@ import pandas as pd
 from scripts.vocabulary import Vocabulary
 
 class Vectorizer:
-    def __init__(self, tokenizer, src_vocab: Vocabulary, trg_vocabs: dict[str: Vocabulary], letter_vocab: Vocabulary, word_representation: str, pad_idx: int = 0):
+    def __init__(self, src_vocab: Vocabulary, trg_vocabs: dict[str: Vocabulary], letter_vocab: Vocabulary, word_representation: str, pad_idx: int = 0):
         """
         Инициализирует объект для преобразования токенов в индексы.
         
         Args:
-            tokenizer: Токенизатор для обработки текста
             src_vocab (Vocabulary): Словарь для исходных токенов
             trg_vocabs (dict[str: Vocabulary]): Словари для целевых токенов
             letter_vocab (Vocabulary): Словарь для букв
             word_representation (str): Тип представления слов ('tokens', 'letters' или оба)
             pad_idx (int, optional): Индекс padding-токена. По умолчанию 0
         """
-        self.tokenizer = tokenizer
         self.src_vocab = src_vocab
         self.trg_vocabs = trg_vocabs
         self.letter_vocab = letter_vocab
@@ -65,7 +63,7 @@ class Vectorizer:
         padded[:min(len(indices), seq_len)] = indices[:min(len(indices), seq_len)]
         return padded
 
-    def vectorize_tokens(self, max_tokens_count: int, max_words_count: int, source_words: list[str]) -> list[list[int]]:
+    def vectorize_tokens(self, max_tokens_count: int, max_words_count: int, tokens: list[str]) -> list[list[int]]:
         """
         Векторизует слова в токены.
         
@@ -77,12 +75,11 @@ class Vectorizer:
         Returns:
             list[list[int]]: Матрица токенов [слово][токен]
         """
-        tokens = [[self.pad_idx] * max_tokens_count for _ in range(max_words_count)]
-        for idx, word in enumerate(source_words):
-            tokenized = self.tokenizer.encode(word).tokens
-            tokens_indices = self.get_indices(tokenized, self.src_vocab, False, False)
-            tokens[idx] = self.pad_sequence(tokens_indices, max_tokens_count, self.pad_idx)
-        return tokens
+        output = [[self.pad_idx] * max_tokens_count for _ in range(max_words_count)]
+        for idx, word_tokens in enumerate(tokens):
+            tokens_indices = self.get_indices(word_tokens, self.src_vocab, False, False)
+            output[idx] = self.pad_sequence(tokens_indices, max_tokens_count, self.pad_idx)
+        return output
 
     def vectorize_letters(self, max_letters_count: int, max_words_count: int, source_words: list[str]) -> list[list[int]]:
         """
@@ -102,7 +99,20 @@ class Vectorizer:
             letters_indices = self.get_indices(cur_letters, self.letter_vocab, add_bos=False, add_eos=False)
             letters[idx] = self.pad_sequence(letters_indices, max_letters_count, self.pad_idx)
         return letters
+    
+    def vectorize_targets(self, df_row, target_names, max_words_count, add_bos_eos_tokens):
+        trg_vectorized = {}
+        for target_name in target_names:
+            trg_indices = self.get_indices(
+                df_row[target_name], 
+                self.trg_vocabs[target_name], 
+                add_bos=add_bos_eos_tokens, 
+                add_eos=add_bos_eos_tokens
+            )
+            trg_vectorized[target_name] = self.pad_sequence(trg_indices, max_words_count, self.pad_idx)
+        return trg_vectorized
 
+    # deprecated method
     def vectorize(self, df_row: pd.Series, target_names: list[str], max_subtokens_count: int, max_words_count: int, max_letters_count: int, add_bos_eos_tokens: bool = True) -> dict[str, list[int]]:
         """
         Основной метод векторизации, преобразует строку данных в числовые представления.
@@ -124,7 +134,7 @@ class Vectorizer:
         source_words = df_row['source_words']
         
         if self.word_representation == 'tokens':
-            tokens = self.vectorize_tokens(max_subtokens_count, max_words_count, source_words)
+            tokens = self.vectorize_tokens(max_subtokens_count, max_words_count, df_row['tokens'])
             letters = None
         elif self.word_representation == 'letters':
             tokens = None
@@ -133,15 +143,7 @@ class Vectorizer:
             tokens = self.vectorize_tokens(max_subtokens_count, max_words_count, source_words)
             letters = self.vectorize_letters(max_letters_count, max_words_count, source_words)
 
-        trg_vectorized = {}
-        for target_name in target_names:
-            trg_indices = self.get_indices(
-                df_row[target_name], 
-                self.trg_vocabs[target_name], 
-                add_bos=add_bos_eos_tokens, 
-                add_eos=add_bos_eos_tokens
-            )
-            trg_vectorized[target_name] = self.pad_sequence(trg_indices, max_words_count, self.pad_idx)
+        trg_vectorized = self.vectorize_targets(df_row, target_names, max_words_count, add_bos_eos_tokens)
         
         return {
             'tokens': tokens,
