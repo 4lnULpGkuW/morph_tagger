@@ -31,6 +31,12 @@ class Vocabulary:
         if token_to_idx is not None:
             self.token_to_idx = token_to_idx
             self.idx_to_token = {value: key for key, value in token_to_idx.items()}
+            self.pad_idx = self.token_to_idx[pad_token]
+            self.unk_idx = self.token_to_idx[unk_token]
+            self.mask_idx = self.token_to_idx[mask_token]
+            if add_bos_eos_tokens:
+                self.bos_idx = self.token_to_idx[bos_token]
+                self.eos_idx = self.token_to_idx[eos_token]
         else:
             self.token_to_idx = {}
             self.idx_to_token = {}
