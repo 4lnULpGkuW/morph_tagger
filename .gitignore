@@ -2,7 +2,7 @@
 __pycache__/
 .venv*/
 data/
-train.py
+train.ipynb
 *.json
 *.pt
 model_params.pt
@@ -10,3 +10,4 @@ model_params.pt
 *old*.py
 .env.linux
 .env.win
+checkpoints/
