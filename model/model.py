@@ -184,6 +184,12 @@ class MHAModel(nn.Module):
             else:
                 self.letters_in_word_pos_encoding = None
 
+        # Сеть "эксперт" для определения коэффициентов при аггрегации субтокенов слова
+        self.aggregation_ff = nn.Sequential(nn.Linear(tokens_embedding_dim, 2*tokens_embedding_dim),
+                                            nn.GELU(),
+                                            nn.Dropout(dropout),
+                                            nn.Linear(2*tokens_embedding_dim, 1))
+
         # Проекционный слой для приведения к main_attention_dim
         if word_representation == 'both':
             self.embed_to_encod_proj = nn.Linear(self.all_letters_embeddings_dim + self.tokens_embedding_dim, main_attention_dim, bias)
@@ -419,15 +425,19 @@ class MHAModel(nn.Module):
                 # Внимание между субтокенами
                 tokens_processed = self.subtokens_attention(tokens_embed, tokens_key_padding_mask_flat)
                 
+                # Агрегация через оперделение весов субтокенов слова
+                aggregation_scores = self.aggregation_ff(tokens_processed) * self.one_over_tokens_dim_sqrt * 0.5 # Уменьшаем абсолютное значение выходов, чтобы сгладить значения после softmax
+                aggregation_scores = nn.functional.softmax(aggregation_scores, dim=-2) # [B, S, T, 1]
+                tokens_processed = tokens_processed * aggregation_scores # Поэлементное умножение с broadcasting
                 # Агрегация (суммирование по субтокенам слова)
-                tokens_aggregated = tokens_processed.sum(dim=1)  # [B*S, Et]
-                tokens_aggregated = tokens_aggregated.reshape(B, S, Et)  # [B, S, Et]
+                tokens_processed = tokens_processed.sum(dim=1)  # [B*S, Et]
+                tokens_processed = tokens_processed.reshape(B, S, Et)  # [B, S, Et]
 
                 # Позиционное кодирование на уровне слов
                 if self.words_pos_encoding is not None:
-                    tokens_aggregated = self.words_pos_encoding(tokens_aggregated, words_padding_mask)
+                    tokens_processed = self.words_pos_encoding(tokens_processed, words_padding_mask)
                 
-                x = tokens_aggregated
+                x = tokens_processed
 
             if self.word_representation != 'tokens':
                 # Эмбеддинг букв
