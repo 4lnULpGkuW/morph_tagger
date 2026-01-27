@@ -34,6 +34,11 @@ DATASETS_FOLDER_PATH = os.getenv('DATASETS_FOLDER_PATH')
 SYNTAGRUS_VERSION = os.getenv('SYNTAGRUS_VERSION', '2.16') # Допустимые занчения: 2.3; 2.16 | В версии 2.3 меньше тренировочных примеров, по сравнению с 2.16. Точность на тестовой выборке практически не меняется
 SYNTAGRUS_PATH = os.getenv('SYNTAGRUS_PATH')
 SYNTAGRUS_TEXTS_PATH = os.getenv('SYNTAGRUS_TEXTS_PATH')
+MODEL_DATA_SAVE_FILEPATH = os.getenv('MODEL_DATA_SAVE_FILEPATH')
+
+EXPERIMENT_NAME = 'ff_aggregation'
+CHECKPOINTS_FILEPATH = os.path.join(MODEL_DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'checkpoints')
+TRAINING_INFO_FILEPATH = os.path.join(MODEL_DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data')
 
 TAIGA_PATH = os.getenv('TAIGA_PATH')
 TAIGA_TEXTS_PATH = os.getenv('TAIGA_TEXTS_PATH')
@@ -41,7 +46,7 @@ TAIGA_TEXTS_PATH = os.getenv('TAIGA_TEXTS_PATH')
 MERGED_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged')
 MERGED_TEXTS_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged.txt')
 
-DATASET_TO_PREPARE = 'merged' # taiga, syntagrus of merged
+DATASET_TO_PREPARE = 'merged' # taiga, syntagrus or merged
 
 # Определение датасета для обучения
 if DATASET_TO_PREPARE == 'syntagrus':
@@ -89,7 +94,7 @@ DROPOUT = 0.25
 TEMPERATURE = 1
 BATCH_FIRST = True
 
-MODEL_SAVE_FILEPATH = f'checkpoints/final_{WORD_REPRESENTATION}_model_params.pt'
+MODEL_SAVE_FILEPATH = os.path.join(CHECKPOINTS_FILEPATH, f'final_{WORD_REPRESENTATION}_model_params.pt')
 
 RANDOM_STATE = 42
 
@@ -116,16 +121,16 @@ def save_results_to_file(model, model_filepath:str, train_states:list=None, vali
     torch.save(model, model_filepath)
     logging.info('Параметры модели сохранены')
     if train_states is not None:
-        with open(f"data/{WORD_REPRESENTATION}_train_states.json", "w", encoding="utf-8") as file:
+        with open(os.path.join(TRAINING_INFO_FILEPATH, f"{WORD_REPRESENTATION}_train_states.json"), "w", encoding="utf-8") as file:
             json.dump(train_states, file, indent=4, ensure_ascii=False)
             logging.info('Метрики обучения сохранены')
         
-        with open(f"checkpoints/{WORD_REPRESENTATION}_model_hyperparams.json", "w", encoding="utf-8") as file:
+        with open(os.path.join(CHECKPOINTS_FILEPATH, f"{WORD_REPRESENTATION}_model_hyperparams.json"), "w", encoding="utf-8") as file:
             json.dump(model.get_hyperparams(), file, indent=4, ensure_ascii=False)
             logging.info('Гиперпараметры сохранены')
 
     if validation_states is not None:
-        with open(f"data/{WORD_REPRESENTATION}_validation_states.json", "w", encoding="utf-8") as file:
+        with open(os.path.join(TRAINING_INFO_FILEPATH, f"{WORD_REPRESENTATION}_validation_states.json"), "w", encoding="utf-8") as file:
             json.dump(validation_states, file, indent=4, ensure_ascii=False)
             logging.info('Метрики валидации сохранены')
 
@@ -246,7 +251,7 @@ logging.info('Инициализация датасета...')
 dataset = CustomDataset(train_df, target_names, MAX_SUBTOKENS_COUNT, MAX_WORDS_COUNT,\
                         MAX_LETTERS_COUNT, valid_df=validation_df, test_df=test_df)
 
-logging.info('Перемещение модели на device')
+logging.info('Перемещение модели на device...')
 model = model.to(device=DEVICE)
 optimizer = optim.AdamW(model.parameters(), LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 
@@ -359,7 +364,8 @@ try:
         # Блок с сохранением результатов обучения и изменением learning rate
         if epoch % 2 == 0:
             logging.info('Сохранение результатов обучения...')
-            save_results_to_file(model, f'checkpoints/iter_{epoch}_{WORD_REPRESENTATION}_model_params.pt', train_states, validation_states)
+            save_results_to_file(model, os.path.join(CHECKPOINTS_FILEPATH, f'iter_{epoch}_{WORD_REPRESENTATION}_model_params.pt'),\
+                                 train_states, validation_states)
             torch.save(model, MODEL_SAVE_FILEPATH)
         # Реализация нелинейного расписания изменения learning rate. Такое расписание показывает наискорейшую сходимость
         if epoch == 15:
