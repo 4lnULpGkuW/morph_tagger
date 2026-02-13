@@ -36,7 +36,7 @@ SYNTAGRUS_PATH = os.getenv('SYNTAGRUS_PATH')
 SYNTAGRUS_TEXTS_PATH = os.getenv('SYNTAGRUS_TEXTS_PATH')
 MODEL_DATA_SAVE_FILEPATH = os.getenv('MODEL_DATA_SAVE_FILEPATH')
 
-EXPERIMENT_NAME = 'ff_aggregation'
+EXPERIMENT_NAME = 'ff_aggregation_2'
 CHECKPOINTS_FILEPATH = os.path.join(MODEL_DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'checkpoints')
 TRAINING_INFO_FILEPATH = os.path.join(MODEL_DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data')
 
@@ -86,8 +86,8 @@ CLASSIFIER_FC_HIDDEN_DIM = MAIN_ATTENTION_DIM*4
 
 WORD_REPRESENTATION = 'tokens' # tokens; letters; both  Уровень представления слова (токены, буквы, токены + буквы)
 WORDS_POS_ENCODING = 'learnable' # Допустимые значения: sin; learnable; None
-WORD_SUBTOKENS_POS_ENCODING = 'rope' # Допустимые значения: learnable; None
-LETTERS_POS_ENCODING = 'rope' # Допустимые значения: learnable; sin; None
+WORD_SUBTOKENS_POS_ENCODING = 'rope' # Допустимые значения: learnable; rope; None
+LETTERS_POS_ENCODING = 'learnable' # Допустимые значения: learnable; sin; rope; None. Работоспособность при rope не проверялась
 ROPE_BASE = 10000
 
 DROPOUT = 0.25
@@ -367,7 +367,7 @@ try:
             save_results_to_file(model, os.path.join(CHECKPOINTS_FILEPATH, f'iter_{epoch}_{WORD_REPRESENTATION}_model_params.pt'),\
                                  train_states, validation_states)
             torch.save(model, MODEL_SAVE_FILEPATH)
-        # Реализация нелинейного расписания изменения learning rate. Такое расписание показывает наискорейшую сходимость
+        # Реализация нелинейного расписания изменения learning rate. Такое расписание показывает наискорейшую сходимость согласно наблюдениям
         if epoch == 15:
             LEARNING_RATE = 5e-5
             logging.info(f'Изменение скорости обучения на эпохе {epoch}. Новая скорость обучения: {LEARNING_RATE}')
