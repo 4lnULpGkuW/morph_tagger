@@ -76,8 +76,8 @@ class MHAModel(nn.Module):
             aggregation_moment: Момент агрегации (не используется в текущей реализации)
             letters_in_word_attention_dim: Размерность вектора внимания для букв в слове
             dropout: Вероятность dropout
-            temperature: Температура для softmax
-            batch_first: Если True, то входной тензор имеет размерность [batch, seq_len, features]
+            temperature (deprecated): Температура для softmax
+            batch_first (deprecated): Если True, то входной тензор имеет размерность [batch, seq_len, features]
             word_representation: Способ представления слова ('tokens', 'letters' или 'both')
             init_weights: Инициализировать ли веса модели
             bias: Использовать bias в линейных слоях
@@ -414,6 +414,7 @@ class MHAModel(nn.Module):
                 # Эмбеддинг токенов
                 tokens_embed = self.tokens_embedings(tokens)  # [B, S, T, Et]
                 
+                # reshape для обратной совместимости с ранее написанными методами
                 B, S, T, Et = tokens_embed.size()
                 tokens_embed = tokens_embed.reshape(B*S, T, Et)
                 tokens_key_padding_mask_flat = tokens_key_padding_mask.reshape(B*S, T)
