@@ -1,12 +1,9 @@
 .venv*/
 __pycache__/
-.venv*/
 data/
 train.ipynb
 *.json
 *.pt
-model_params.pt
-.gitignore
 *old*.py
 .env.linux
 .env.win
