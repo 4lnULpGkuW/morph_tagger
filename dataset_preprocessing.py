@@ -1,4 +1,4 @@
-from scripts.tokenizer import train_bpe_tokenizer, get_bpe_tokenizer_from_file
+from scripts.tokenizer import BPETokenizer
 from scripts.vectorizer import Vectorizer
 from scripts.vocabulary import Vocabulary
 import pandas as pd
@@ -142,9 +142,9 @@ else:
     test_df = pd.read_parquet(os.path.join(DATASET_PATH, f'{DATASET_TO_PREPARE}_test.parquet'))
 
 if USE_PRETRAINDED_TOKENIZER:
-    tokenizer = get_bpe_tokenizer_from_file(os.path.join(CHECKPOINTS_FILEPATH,'tokenizer.json'))
+    tokenizer = BPETokenizer.from_pretrained(os.path.join(CHECKPOINTS_FILEPATH,'tokenizer.json'))
 else:
-    tokenizer = train_bpe_tokenizer([CORPUS_TEXTS_PATH], VOCABULARY_SIZE, MIN_FRECQUENCY_PAIR, unk_token=UNK_TOKEN, pad_token=PAD_TOKEN)
+    tokenizer = BPETokenizer.train([CORPUS_TEXTS_PATH], VOCABULARY_SIZE, MIN_FRECQUENCY_PAIR, unk_token=UNK_TOKEN, pad_token=PAD_TOKEN)
     tokenizer.save(f'{CHECKPOINTS_FILEPATH}/tokenizer.json')
 
 train_df = train_df.reset_index().drop(columns=['index'])
@@ -173,19 +173,20 @@ for df_name, df in dataframes.items():
         
     print('\n', '='*20)
 
-urls_counter = 0
-for df_name, df in dataframes.items():
-    for row_idx in range(len(df)):
-        cur_words = df.loc[row_idx, 'source_words']
-        for word_idx, word in enumerate(cur_words):
-            if 'www' in word:
-                urls_counter += 1
-                # print(word_idx)
-                # print(row_idx)
-                for column_name in df.columns:
-                    pass
-                    # print(f'Столбец {column_name} : {df.loc[row_idx, column_name][word_idx]}')
-print(f'urls_counter = {urls_counter}')
+# # Счетчик ссылок url
+# urls_counter = 0
+# for df_name, df in dataframes.items():
+#     for row_idx in range(len(df)):
+#         cur_words = df.loc[row_idx, 'source_words']
+#         for word_idx, word in enumerate(cur_words):
+#             if 'www' in word:
+#                 urls_counter += 1
+#                 # print(word_idx)
+#                 # print(row_idx)
+#                 for column_name in df.columns:
+#                     pass
+#                     # print(f'Столбец {column_name} : {df.loc[row_idx, column_name][word_idx]}')
+# print(f'urls_counter = {urls_counter}')
 
 MAX_WORDS_COUNT = max(find_max_words_source_len(test_df), find_max_words_source_len(validation_df))
 # Берем за максимальное количество субтокенов слова значения квантиля уровня 0.98. Слова, большие этого значения будут обрезаться, но их невероятно мало
@@ -210,6 +211,7 @@ source_name = 'source_text'
 
 # Либо используем подготовленные словари
 if USE_PRETRAINDED_TOKENIZER:
+    # Всегда используем merged в случае предобченного токенизатора, поскольку токенизатор должен быть обучен на как можно более разнообразной выборке
     source_vocab = Vocabulary.from_json(f'{DATA_INFO_FILEPATH}/merged_source_vocab.json')
     with open(f'{DATA_INFO_FILEPATH}/merged_target_vocabs.json', 'r', encoding='utf-8') as file:
         target_vocabs_dict = json.load(file)

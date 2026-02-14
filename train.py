@@ -1,6 +1,5 @@
 import torch
 import torch.optim as optim
-from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 from scripts.custom_dataset import CustomDataset
 from model.model import MHAModel
@@ -33,7 +32,6 @@ logging.basicConfig(
 DATASETS_FOLDER_PATH = os.getenv('DATASETS_FOLDER_PATH')
 SYNTAGRUS_VERSION = os.getenv('SYNTAGRUS_VERSION', '2.16') # Допустимые занчения: 2.3; 2.16 | В версии 2.3 меньше тренировочных примеров, по сравнению с 2.16. Точность на тестовой выборке практически не меняется
 SYNTAGRUS_PATH = os.getenv('SYNTAGRUS_PATH')
-SYNTAGRUS_TEXTS_PATH = os.getenv('SYNTAGRUS_TEXTS_PATH')
 DATA_SAVE_FILEPATH = os.getenv('DATA_SAVE_FILEPATH')
 
 EXPERIMENT_NAME=os.getenv('EXPERIMENT_NAME')
@@ -41,10 +39,8 @@ CHECKPOINTS_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'checkp
 DATA_INFO_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data')
 
 TAIGA_PATH = os.getenv('TAIGA_PATH')
-TAIGA_TEXTS_PATH = os.getenv('TAIGA_TEXTS_PATH')
 
 MERGED_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged')
-MERGED_TEXTS_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged.txt')
 
 Path.mkdir(Path(DATA_SAVE_FILEPATH, EXPERIMENT_NAME), exist_ok=True)
 Path.mkdir(Path(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data'), exist_ok=True)
@@ -70,7 +66,6 @@ SHUFFLE = True
 DROP_LAST = True
 EPOCHS = 35
 LEARNING_RATE = 1e-4
-# MAX_LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-5
 
 USE_PRETRAINED = False
