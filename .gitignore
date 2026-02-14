@@ -4,4 +4,3 @@ __pycache__/
 *old*.py
 .env.linux
 .env.win
-*.pt
