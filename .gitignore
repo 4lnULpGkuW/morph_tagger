@@ -1,10 +1,6 @@
 .venv*/
 __pycache__/
-data/
 *.ipynb
-*.json
-*.pt
 *old*.py
 .env.linux
 .env.win
-checkpoints/
