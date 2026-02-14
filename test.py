@@ -42,7 +42,6 @@ DATA_INFO_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data') #
 MODEL_CHECKPOINT = os.path.join(CHECKPOINTS_FILEPATH, f'final_tokens_model_params.pt')
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-device = 'cpu'
 
 # Чтение конфигурации словарей
 with open(f'{DATA_INFO_FILEPATH}/merged_vocabs_configuration.json', 'r', encoding='utf-8') as file:
