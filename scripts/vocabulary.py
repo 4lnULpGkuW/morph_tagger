@@ -90,6 +90,11 @@ class Vocabulary:
         if index in self.idx_to_token:
             return self.idx_to_token[index]
         return self.unk_token
+    
+    def get_tokens(self, indices:list[int]):
+        '''Возвращает список токенов'''
+        return [self.get_token(index) for index in indices]
+
 
     def get_index(self, token: str) -> int:
         """
