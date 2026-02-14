@@ -403,7 +403,7 @@ class MHAModel(nn.Module):
         
         return output
 
-    def forward(self, tokens:torch.Tensor, letters:torch.Tensor, apply_softmax:bool = False) -> dict[str, torch.Tensor]:
+    def forward(self, tokens:torch.Tensor, letters:torch.Tensor, apply_softmax:bool = False, temperature:int = 1) -> dict[str, torch.Tensor]:
             # tokens [B, S, T], letters [B, S, L]
             
             # Создание масок
@@ -488,6 +488,10 @@ class MHAModel(nn.Module):
 
             if apply_softmax:
                 for key in logits:
-                    logits[key] = nn.functional.softmax(logits[key] / self.temperature, dim=-1)
+                    logits[key] = nn.functional.softmax(logits[key] / temperature, dim=-1)
 
             return logits
+    
+    @classmethod
+    def from_pretrained(cls, checkpoint_path : str):
+        return torch.load(checkpoint_path, weights_only=False)
