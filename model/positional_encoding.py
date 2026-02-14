@@ -23,9 +23,6 @@ class RoPE(nn.Module):
         # Вычисляем частоты для каждой позиции: positions (max_seq_len) * inv_freq (dim/2)
         freqs = torch.einsum('i,j->ij', positions, self.inv_freq) # [max_seq_len, dim/2]
         
-        # # Повторяем каждую частоту дважды для парных измерений
-        # freqs = freqs.repeat_interleave(2, dim=-1) # [max_seq_len, dim]
-        
         # Предвычисляем косинусы и синусы для позиций
         cos_cached = torch.cos(freqs).unsqueeze(0) # [1, max_seq_len, dim/2]
         sin_cached = torch.sin(freqs).unsqueeze(0) # [1, max_seq_len, dim/2]
@@ -67,10 +64,10 @@ class LearnablePositionalEncoding(nn.Module):
         self.padding_idx = padding_idx
         
         self.pos_embeddings = nn.Embedding(max_seq_len+1, embed_dim, padding_idx=padding_idx)
-        pos_idx = torch.arange(1, max_seq_len+1, device=device).unsqueeze(0) # [1, seq_size]
+        self.pos_idx = torch.arange(1, max_seq_len+1, device=device).unsqueeze(0) # [1, seq_size]
         
         # Регистрируем буфер
-        self.register_buffer('pos_idx', pos_idx)
+        self.register_buffer('pos_idx', self.pos_idx)
 
     def forward(self, x:torch.Tensor, key_padding_mask:torch.Tensor = None):
         batch_size = x.size(0)

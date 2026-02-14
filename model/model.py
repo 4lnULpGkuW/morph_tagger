@@ -18,8 +18,8 @@ class EncoderBlock(nn.Module):
         self.norm2 = nn.LayerNorm(main_attention_dim)
 
         self.encoder_ff =  nn.Sequential(
-            nn.Linear(main_attention_dim, main_encoder_ff_dim, bias), 
-            nn.GELU(), 
+            nn.Linear(main_attention_dim, main_encoder_ff_dim, bias),
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(main_encoder_ff_dim, main_attention_dim, bias)
         )
@@ -40,7 +40,7 @@ class EncoderBlock(nn.Module):
         x = x + self.dropout(attention_out)
         encoder_out = self.encoder_ff(self.norm2(x))
 
-        # Обнуляем выход для padding позиций
+        # Обнуляем выход для padding позиций снова
         encoder_out = encoder_out * (~key_padding_mask).unsqueeze(-1).float()
 
         return x + encoder_out
@@ -132,14 +132,7 @@ class MHAModel(nn.Module):
                 nn.GELU(), 
                 nn.Dropout(dropout))
 
-            # Позиционное кодирование
-            if words_pos_encoding == 'sin':
-                self.words_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_words_count, device)
-            elif words_pos_encoding == 'learnable':
-                self.words_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_words_count, padding_idx, device)
-            else:
-                self.words_pos_encoding = None
-                
+            # Позиционное кодировани на уровне токенов слова
             if word_subtokens_pos_encoding == 'sin':
                 self.word_subtokens_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_word_subtokens_count, device)
             elif word_subtokens_pos_encoding == 'learnable':
@@ -148,6 +141,14 @@ class MHAModel(nn.Module):
                 self.word_subtokens_pos_encoding = RoPE(tokens_embedding_dim, max_word_subtokens_count, rope_base, device)
             else:
                 self.word_subtokens_pos_encoding = None
+
+            # Позиционное кодирование на уровне слов
+            if words_pos_encoding == 'sin':
+                self.words_pos_encoding = SinusoidalPositionalEncoding(tokens_embedding_dim, max_words_count, device)
+            elif words_pos_encoding == 'learnable':
+                self.words_pos_encoding = LearnablePositionalEncoding(tokens_embedding_dim, max_words_count, padding_idx, device)
+            else:
+                self.words_pos_encoding = None            
 
         if word_representation != 'tokens':
             # Эмбеддинги букв
@@ -160,18 +161,18 @@ class MHAModel(nn.Module):
             self.letters_v = nn.Linear(letters_embeddings_dim, letters_in_word_attention_dim, bias)
             self.letters_norm = nn.LayerNorm(letters_in_word_attention_dim)
             self.letters_attention_ff = nn.Sequential(
-                nn.Linear(letters_in_word_attention_dim, letters_in_word_attention_dim*2), 
-                nn.GELU(), 
-                nn.Dropout(dropout), 
+                nn.Linear(letters_in_word_attention_dim, letters_in_word_attention_dim*2),
+                nn.GELU(),
+                nn.Dropout(dropout),
                 nn.Linear(letters_in_word_attention_dim*2, letters_in_word_attention_dim))
             
-            # FF для буквенных представлений
+            # Char FF для буквенных представлений (см статью RNN Morph за авторством Ильи Гусева)
             self.char_ff = nn.Sequential(
-                nn.Linear(self.all_letters_embeddings_dim, self.main_attention_dim), 
-                nn.GELU(), 
+                nn.Linear(self.all_letters_embeddings_dim, self.main_attention_dim),
+                nn.GELU(),
                 nn.Dropout(dropout),
-                nn.Linear(self.main_attention_dim, self.all_letters_embeddings_dim), 
-                nn.GELU(), 
+                nn.Linear(self.main_attention_dim, self.all_letters_embeddings_dim),
+                nn.GELU(),
                 nn.Dropout(dropout))
 
             # Позиционное кодирование для букв
@@ -337,8 +338,8 @@ class MHAModel(nn.Module):
         # tokens [B*S, T, E]
         residual_tokens = tokens
         subtokens_q, subtokens_k, subtokens_v = (
-            self.subtokens_q(tokens), 
-            self.subtokens_k(tokens), 
+            self.subtokens_q(tokens),
+            self.subtokens_k(tokens),
             self.subtokens_v(tokens))
         
         if self.word_subtokens_pos_encoding_value == 'rope':
