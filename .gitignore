@@ -2,5 +2,8 @@
 __pycache__/
 *.ipynb
 *old*.py
+ignore*
 .env.linux
 .env.win
+.env
+notes.md
