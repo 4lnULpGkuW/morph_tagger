@@ -8,16 +8,20 @@ import os
 import sys
 import json
 import logging
+import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 
-if sys.platform == 'linux':
-    load_dotenv(dotenv_path=(Path('.')/'.env.linux'))
-elif sys.platform == 'win32':
-    load_dotenv(dotenv_path=(Path('.')/'.env.win'))
-else:
-    raise ValueError('Ваша операционная система не поддерживается!')
+# Переопределяем параметры логгирования для вывода сообщений уровня info
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
 
+load_dotenv(dotenv_path=(Path('.')/'.env'))
+
+# Пути для сохранения распакованных из формата conllu датасетов, не поддверженных модификации текущим скриптом
 DATASETS_FOLDER_PATH = os.getenv('DATASETS_FOLDER_PATH')
 SYNTAGRUS_VERSION = os.getenv('SYNTAGRUS_VERSION', '2.16') # Допустимые занчения: 2.3; 2.16 | В версии 2.3 меньше тренировочных примеров, по сравнению с 2.16. Точность на тестовой выборке практически не меняется
 SYNTAGRUS_PATH = os.getenv('SYNTAGRUS_PATH')
@@ -33,14 +37,45 @@ EXPERIMENT_NAME=os.getenv('EXPERIMENT_NAME')
 DATA_SAVE_FILEPATH = os.getenv('DATA_SAVE_FILEPATH')
 CHECKPOINTS_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'checkpoints')
 DATA_INFO_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data')
+DATASET_SAVE_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'dataset') # Путь для сохранения подготовленного датасета. Подготовленный датасет включает в себя столбцы с индексами входов и выходов
 
-DATASET_TO_PREPARE = 'taiga' # taiga, syntagrus or merged
+# Парсинг аргументов командной строки
+parser = argparse.ArgumentParser(description='Подготовка датасетов Syntagrus, Taiga или их слияния')
+parser.add_argument(
+    '--dataset',
+    type=str,
+    default='merged',
+    choices=['taiga', 'syntagrus', 'merged'],
+    help='Какой датасет подготовить: taiga, syntagrus или merged',
+    required=True,
+)
+parser.add_argument(
+    '--pretrained',
+    action='store_true',
+    help='Использование предобученного токенизатора или обучение нового. ',
+)
+parser.add_argument(
+    '--mfp',
+    type=int,
+    default=1000,
+    help='Выбор минимальной частоты встречаемости соседних символов для их слияния в один токен при обучении токенизатора. ' \
+    'Например, при MFP = 200, символы не будут обьеденены в токен, если встретились по соседству менее 200 раз.'
+)
+args = parser.parse_args()
 
-USE_PRETRAINDED_TOKENIZER = True # Обучить новый токенизатор или использовать предобученный заранее.
+DATASET_TO_PREPARE = args.dataset
+USE_PRETRAINDED_TOKENIZER = True if args.pretrained else False
+MIN_FRECQUENCY_PAIR = args.mfp
+logging.info(f'''Текущие параметры обработки датасета и конфигурация токенизатора:
+             DATASET_TO_PREPARE: {DATASET_TO_PREPARE}
+             USE_PRETRAINDED_TOKENIZER: {USE_PRETRAINDED_TOKENIZER}
+             MIN_FRECQUENCY_PAIR: {MIN_FRECQUENCY_PAIR}''')
 
 Path.mkdir(Path(DATA_SAVE_FILEPATH, EXPERIMENT_NAME), exist_ok=True)
 Path.mkdir(Path(CHECKPOINTS_FILEPATH), exist_ok=True)
 Path.mkdir(Path(DATA_INFO_FILEPATH), exist_ok=True)
+Path.mkdir(Path(DATASET_SAVE_FILEPATH), exist_ok=True)
+logging.info('Пути для сохранения файлов созданы')
 
 # Определение датасетов для подготовки
 if DATASET_TO_PREPARE == 'syntagrus':
@@ -65,7 +100,6 @@ ADD_BOS_EOS_TOKENS = False
 WORD_REPRESENTATION = 'tokens' # tokens; letters; both  Уровень представления слова (токены, буквы, токены + буквы)
 
 VOCABULARY_SIZE = 10000
-MIN_FRECQUENCY_PAIR = 500
 
 MAX_WORDS_COUNT = 0
 MAX_SUBTOKENS_COUNT = 0
@@ -124,6 +158,7 @@ def tokenize_dataset(dataframe:pd.DataFrame, tokenizer, return_length=False):
                  dataframe.loc[row, 'length'] += len(tokens)
     return dataframe
 
+logging.info('Считывание датасета')
 if DATASET_TO_PREPARE == 'merged':
     train_df = pd.concat([
         pd.read_parquet(os.path.join(TAIGA_PATH, f'taiga_train.parquet')),
@@ -142,8 +177,10 @@ else:
     test_df = pd.read_parquet(os.path.join(DATASET_PATH, f'{DATASET_TO_PREPARE}_test.parquet'))
 
 if USE_PRETRAINDED_TOKENIZER:
-    tokenizer = BPETokenizer.from_pretrained(os.path.join(CHECKPOINTS_FILEPATH,'tokenizer.json'))
+    logging.info('Инициализация предобученного токенизатора')
+    tokenizer = BPETokenizer.from_pretrained(f'{CHECKPOINTS_FILEPATH}/tokenizer.json')
 else:
+    logging.info('Обучение нового токенизатора')
     tokenizer = BPETokenizer.train([CORPUS_TEXTS_PATH], VOCABULARY_SIZE, MIN_FRECQUENCY_PAIR, unk_token=UNK_TOKEN, pad_token=PAD_TOKEN)
     tokenizer.save(f'{CHECKPOINTS_FILEPATH}/tokenizer.json')
 
@@ -151,6 +188,7 @@ train_df = train_df.reset_index().drop(columns=['index'])
 test_df = test_df.reset_index().drop(columns=['index'])
 validation_df = validation_df.reset_index().drop(columns=['index'])
 
+logging.info('Токенизация датасета')
 train_df = tokenize_dataset(train_df, tokenizer)
 test_df = tokenize_dataset(test_df, tokenizer)
 validation_df = tokenize_dataset(validation_df, tokenizer)
@@ -167,9 +205,9 @@ for df_name, df in dataframes.items():
     quantile_level = 0.98
     quantile = np.quantile(np_arr, quantile_level)
     print(f'Квантиль уровня {quantile_level} = {quantile}')
-    for count, subtoken in subtokens_dict.items():
-        if count > quantile:
-            print(f'Аномальное значение субтокенов слова. Всего {count} субтокенов в слове {subtoken}')
+    # for count, subtoken in subtokens_dict.items():
+    #     if count > quantile:
+    #         print(f'Аномальное значение субтокенов слова. Всего {count} субтокенов в слове {subtoken}')
         
     print('\n', '='*20)
 
@@ -209,8 +247,10 @@ target_names = ['upos', 'head', 'deprel', 'Mood', 'NumType', 'VerbForm',
        'Gender', 'NumForm', 'Aspect', 'Case', 'PronType', 'Tense', 'Abbr', 'Voice']
 source_name = 'source_text'
 
+
 # Либо используем подготовленные словари
 if USE_PRETRAINDED_TOKENIZER:
+    logging.info('Инициализация словарей из json')
     # Всегда используем merged в случае предобченного токенизатора, поскольку токенизатор должен быть обучен на как можно более разнообразной выборке
     source_vocab = Vocabulary.from_json(f'{DATA_INFO_FILEPATH}/merged_source_vocab.json')
     with open(f'{DATA_INFO_FILEPATH}/merged_target_vocabs.json', 'r', encoding='utf-8') as file:
@@ -219,6 +259,7 @@ if USE_PRETRAINDED_TOKENIZER:
     letters_vocab = Vocabulary.from_json(f'{DATA_INFO_FILEPATH}/merged_letters_vocab.json')
 # Либо инициализируем новые (В случае обучения нового токенизатора)
 else:
+    logging.info('Заполнение словарей с нуля')
     source_vocab = Vocabulary(bos_token=BOS_TOKEN, eos_token=EOS_TOKEN, pad_token=PAD_TOKEN, mask_token=MASK_TOKEN, unk_token=UNK_TOKEN, add_bos_eos_tokens=ADD_BOS_EOS_TOKENS)
     target_vocabs = {target_name: Vocabulary(bos_token=BOS_TOKEN, eos_token=EOS_TOKEN, pad_token=PAD_TOKEN,\
                                             mask_token=MASK_TOKEN, unk_token=UNK_TOKEN, add_bos_eos_tokens=ADD_BOS_EOS_TOKENS) for target_name in target_names}
@@ -250,7 +291,7 @@ pad_idx = source_vocab.pad_idx
 trg_vocabs_len = {key:len(target_vocabs[key]) for key in target_names}
 
 print(f'Длина словаря токенов = {len(source_vocab)}')
-print(f'Длина словаря символов = {len(letters_vocab)}')
+# print(f'Длина словаря символов = {len(letters_vocab)}')
 for key in target_names:
     print(f'Длина словаря признака {key} = {len(target_vocabs[key])}')
 
@@ -266,6 +307,7 @@ for key in target_names:
 
 vectorizer = Vectorizer(source_vocab, target_vocabs, letters_vocab, WORD_REPRESENTATION, pad_idx)
 
+logging.info('Получение индексов токенов и создание соответстующего столбца в датафрейме')
 train_df['input_ids'] = None
 for target_name in target_names:
     train_df[f'{target_name}_ids'] = None
@@ -300,6 +342,7 @@ train_df = train_df.drop(columns=[*[target_name for target_name in target_names]
 validation_df = validation_df.drop(columns=[*[target_name for target_name in target_names], 'lemmas', 'xpos', 'feats', 'misc', 'source_text'])
 test_df = test_df.drop(columns=[*[target_name for target_name in target_names], 'lemmas', 'xpos', 'feats', 'misc', 'source_text'])
 
+logging.info('Сохранение полученной конфигурации в файл')
 with open(f'{DATA_INFO_FILEPATH}/{DATASET_TO_PREPARE}_vocabs_configuration.json', 'w', encoding='utf-8') as file:
     json.dump({
     'MIN_FRECQUENCY_PAIR' : MIN_FRECQUENCY_PAIR,
@@ -311,12 +354,10 @@ with open(f'{DATA_INFO_FILEPATH}/{DATASET_TO_PREPARE}_vocabs_configuration.json'
     'TRG_VOCABS_LEN' : trg_vocabs_len,
     'PAD_IDX' : pad_idx}, file, indent=4, ensure_ascii=False)
 
+logging.info('Сохранение полученных датасетов в формате .parquet')
 if 'Clitic' in train_df.columns:
     train_df = train_df.drop(columns=['Clitic'])
-train_df.to_parquet(os.path.join(DATASET_PATH, 'prepared_train.parquet'), engine="fastparquet", index=False)
-test_df.to_parquet(os.path.join(DATASET_PATH, 'prepared_test.parquet'), engine="fastparquet", index=False)
-validation_df.to_parquet(os.path.join(DATASET_PATH, 'prepared_dev.parquet'), engine="fastparquet", index=False)
-
-
-
-
+train_df.to_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_train.parquet'), engine="fastparquet", index=False)
+test_df.to_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_test.parquet'), engine="fastparquet", index=False)
+validation_df.to_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_dev.parquet'), engine="fastparquet", index=False)
+logging.info('Готово!')

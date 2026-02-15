@@ -9,17 +9,12 @@ import time
 import os
 import sys
 import logging
+import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 from sklearn.metrics import precision_recall_fscore_support
 
-# Определение платформы запуска
-if sys.platform == 'linux':
-    load_dotenv(dotenv_path=(Path('.')/'.env.linux'))
-elif sys.platform == 'win32':
-    load_dotenv(dotenv_path=(Path('.')/'.env.win'))
-else:
-    raise ValueError('Ваша операционная система не поддерживается!')
+load_dotenv(dotenv_path=(Path('.')/'.env'))
 
 # Переопределяем параметры логгирования для вывода сообщений уровня info
 logging.basicConfig(
@@ -28,35 +23,65 @@ logging.basicConfig(
     stream=sys.stdout
 )
 
+WORD_REPRESENTATION = 'tokens' # tokens; letters; both  Уровень представления слова (токены, буквы, токены + буквы)
+WORDS_POS_ENCODING = 'learnable' # Допустимые значения: sin; learnable; None
+WORD_SUBTOKENS_POS_ENCODING = 'rope' # Допустимые значения: learnable; rope; None
+LETTERS_POS_ENCODING = 'learnable' # Допустимые значения: learnable; sin; None. Работоспособность при rope не проверялась
+
 # Определение пути датасетов
 DATASETS_FOLDER_PATH = os.getenv('DATASETS_FOLDER_PATH')
 SYNTAGRUS_VERSION = os.getenv('SYNTAGRUS_VERSION', '2.16') # Допустимые занчения: 2.3; 2.16 | В версии 2.3 меньше тренировочных примеров, по сравнению с 2.16. Точность на тестовой выборке практически не меняется
-SYNTAGRUS_PATH = os.getenv('SYNTAGRUS_PATH')
 DATA_SAVE_FILEPATH = os.getenv('DATA_SAVE_FILEPATH')
 
 EXPERIMENT_NAME=os.getenv('EXPERIMENT_NAME')
 CHECKPOINTS_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'checkpoints')
 DATA_INFO_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data')
+DATASET_SAVE_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'dataset') # Путь для сохранения подготовленного датасета. Подготовленный датасет включает в себя столбцы с индексами входов и выходов
 
-TAIGA_PATH = os.getenv('TAIGA_PATH')
 
-MERGED_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged')
+MODEL_SAVE_FILEPATH = os.path.join(CHECKPOINTS_FILEPATH, f'final_{WORD_REPRESENTATION}_model_params.pt')
 
 Path.mkdir(Path(DATA_SAVE_FILEPATH, EXPERIMENT_NAME), exist_ok=True)
 Path.mkdir(Path(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data'), exist_ok=True)
 Path.mkdir(Path(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'checkpoints'), exist_ok=True)
+Path.mkdir(Path(DATASET_SAVE_FILEPATH), exist_ok=True)
+logging.info('Пути для сохранения файлов созданы')
 
 DATASET_TO_PREPARE = 'merged' # taiga, syntagrus or merged
 
-# Определение датасета для обучения
-if DATASET_TO_PREPARE == 'syntagrus':
-    DATASET_PATH = SYNTAGRUS_PATH
-elif DATASET_TO_PREPARE == 'taiga':
-    DATASET_PATH = TAIGA_PATH
-elif DATASET_TO_PREPARE == 'merged':
-    DATASET_PATH = MERGED_PATH
-else:
-    raise ValueError('Неверный параметр используемого датасета')
+# Парсинг аргумента командной строки
+parser = argparse.ArgumentParser(description='Обучение модели морфологического классификатора')
+parser.add_argument(
+    '--dataset',
+    type=str,
+    default='merged',
+    choices=['taiga', 'syntagrus', 'merged'],
+    help='Выбор датасета для обучения: taiga, syntagrus или merged (слияние taiga и syntagrus)',
+    required=True,
+)
+parser.add_argument(
+    '--pretrained',
+    action='store_true',
+    help='Использование предобученной модели или обучение новой.',
+)
+parser.add_argument(
+    '--batch',
+    type=int,
+    default=96,
+    help='Выбор размера батча для обучения.'
+)
+parser.add_argument(
+    '--device',
+    choices=['cpu', 'cuda'],
+    default='cuda',
+    help='Устройство для инференса модели.'
+)
+parser.add_argument(
+    '--checkpoint_epoch',
+    type=int,
+    default=2,
+    help='Сохранение параметров модели и метрик обучения каждые checkpoint_epoch эпох'
+)
 
 # Параметры обучения модели
 USE_CLASSES_WEIGHTS = False
@@ -68,9 +93,6 @@ EPOCHS = 35
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 1e-5
 
-USE_PRETRAINED = False
-
-BATCH_SIZE = 96
 INIT_WEIGHTS = True
 BIAS = True
 TOKENS_EMBEDDING_DIM = 512
@@ -83,22 +105,27 @@ MAIN_ENCODER_FC_HIDDEN_DIM = MAIN_ATTENTION_DIM*4 # Как в классичес
 
 CLASSIFIER_FC_HIDDEN_DIM = MAIN_ATTENTION_DIM*4
 
-WORD_REPRESENTATION = 'tokens' # tokens; letters; both  Уровень представления слова (токены, буквы, токены + буквы)
-WORDS_POS_ENCODING = 'learnable' # Допустимые значения: sin; learnable; None
-WORD_SUBTOKENS_POS_ENCODING = 'rope' # Допустимые значения: learnable; rope; None
-LETTERS_POS_ENCODING = 'learnable' # Допустимые значения: learnable; sin; rope; None. Работоспособность при rope не проверялась
 ROPE_BASE = 10000
 
 DROPOUT = 0.25
 TEMPERATURE = 1
 BATCH_FIRST = True
 
-MODEL_SAVE_FILEPATH = os.path.join(CHECKPOINTS_FILEPATH, f'final_{WORD_REPRESENTATION}_model_params.pt')
-
 RANDOM_STATE = 42
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-
+args = parser.parse_args()
+DATASET_TO_PREPARE = args.dataset
+BATCH_SIZE = args.batch
+USE_PRETRAINED = True if args.pretrained else False
+CHECKPOINT_EPOCH = args.checkpoint_epoch
+DEVICE = args.device
+DEVICE = DEVICE if torch.cuda.is_available() else 'cpu'
+logging.info(f'''Текущие параметры обработки датасета и конфигурация токенизатора:
+             DATASET_TO_PREPARE: {DATASET_TO_PREPARE}
+             BATCH_SIZE: {BATCH_SIZE}
+             CHECKPOINT_EPOCH: {CHECKPOINT_EPOCH}
+             DEVICE: {DEVICE}
+             USE_PRETRAINED: {USE_PRETRAINED}''')
 
 # print(torch.backends.cuda.flash_sdp_enabled())
 # print(torch.backends.cuda.mem_efficient_sdp_enabled())
@@ -199,10 +226,10 @@ def compute_metrics(predictions: dict[str, torch.Tensor], targets: dict[str, tor
 
 logging.info('Загрука датасетов...')
 # Для валидации будем использовать датасет синтагрус. Для обучения и синтагрус и тайга
-train_df = pd.read_parquet(os.path.join(DATASET_PATH, 'prepared_train.parquet'))
-# validation_df = pd.read_parquet(os.path.join(DATASET_PATH, 'prepared_dev.parquet'))
-validation_df = pd.read_parquet(os.path.join('/mnt/12A4CA9DA4CA8329/Files/Datasets/UD_Russian-SynTagRus-master_2.16', 'prepared_dev.parquet'))
-test_df = pd.read_parquet(os.path.join(DATASET_PATH, 'prepared_test.parquet'))
+train_df = pd.read_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_train.parquet'))
+# validation_df = pd.read_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_dev.parquet'))
+validation_df = pd.read_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'syntagrus_prepared_dev.parquet')) # Для валидации используем только syntagrus
+test_df = pd.read_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_test.parquet'))
 
 
 logging.info('Чтение конфигурации словаря...')
@@ -255,7 +282,6 @@ model = model.to(device=DEVICE)
 optimizer = optim.AdamW(model.parameters(), LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 
 logging.info('Переход к основному циклу обучения и валидации...')
-# Основной цикл обучения и валидации
 try:
     for epoch in range(1, EPOCHS+1):
         train_start_time = time.time()
@@ -281,6 +307,8 @@ try:
 
             # total_loss, train_losses = compute_loss(predictions, batch_dict, target_names, target_weights, PAD_IDX)
             total_loss, train_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
+
+            break
 
             total_loss.backward()
 
@@ -360,8 +388,10 @@ try:
             print(f'Validation: f1-score на признаке {key}: {valid_epoch_metrics[key]['f1']*100}%')
         print(f'Время выполнения {valid_end_time - valid_start_time}')
 
+        break
+
         # Блок с сохранением результатов обучения и изменением learning rate
-        if epoch % 2 == 0:
+        if epoch % CHECKPOINT_EPOCH == 0:
             logging.info('Сохранение результатов обучения...')
             save_results_to_file(model, os.path.join(CHECKPOINTS_FILEPATH, f'iter_{epoch}_{WORD_REPRESENTATION}_model_params.pt'),\
                                  train_states, validation_states)
@@ -379,5 +409,4 @@ try:
 except KeyboardInterrupt:
     print('Принудительная остановка')
 
-
-save_results_to_file(model, MODEL_SAVE_FILEPATH, train_states, validation_states)
+# save_results_to_file(model, MODEL_SAVE_FILEPATH, train_states, validation_states)

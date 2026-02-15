@@ -5,6 +5,7 @@ import sys
 from dotenv import load_dotenv
 from pathlib import Path
 import logging
+import argparse
 
 # Переопределяем параметры логгирования для вывода сообщений уровня info
 logging.basicConfig(
@@ -13,12 +14,7 @@ logging.basicConfig(
     stream=sys.stdout
 )
 
-if sys.platform == 'linux':
-    load_dotenv(dotenv_path=(Path('.')/'.env.linux'))
-elif sys.platform == 'win32':
-    load_dotenv(dotenv_path=(Path('.')/'.env.win'))
-else:
-    raise ValueError('Ваша операционная система не поддерживается!')
+load_dotenv(dotenv_path=(Path('.')/'.env'))
 
 DATASETS_FOLDER_PATH = os.getenv('DATASETS_FOLDER_PATH')
 SYNTAGRUS_VERSION = os.getenv('SYNTAGRUS_VERSION', '2.16') # Допустимые занчения: 2.3; 2.16 | В версии 2.3 меньше тренировочных примеров, по сравнению с 2.16. Точность на тестовой выборке практически не меняется
@@ -31,7 +27,21 @@ TAIGA_TEXTS_PATH = os.getenv('TAIGA_TEXTS_PATH')
 MERGED_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged')
 MERGED_TEXTS_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged.txt')
 
-DATASET_TO_PREPARE = 'merged' # taiga, syntagrus or merged
+# Парсинг аргумента командной строки
+parser = argparse.ArgumentParser(description='Распаковка датасетов из формата conllu')
+parser.add_argument(
+    '--dataset',
+    type=str,
+    default='merged',
+    choices=['taiga', 'syntagrus', 'merged'],
+    help='Какой датасет подготовить: taiga, syntagrus или merged',
+    required=True,
+)
+args = parser.parse_args()
+
+DATASET_TO_PREPARE = args.dataset
+
+logging.info(f'Текущий датасет для распаковки: {DATASET_TO_PREPARE}')
 
 # Словарик для определения имен файлов в зависимости от выбранной опции
 datasets_filenames = {
@@ -195,6 +205,7 @@ def unpack_conllu_and_create_dataframes(dataset_path, train_list, test_list):
             dev_df = temp_df
     return (train_df, dev_df, test_df)
 
+logging.info(f'Распаковка conllu и создание датафрейма...')
 if DATASET_TO_PREPARE == 'taiga':
     train_df, dev_df, test_df = unpack_conllu_and_create_dataframes(TAIGA_PATH, datasets_filenames['taiga']['train_list'], datasets_filenames['taiga']['test_list'])
 elif DATASET_TO_PREPARE == 'syntagrus':
@@ -211,6 +222,7 @@ elif DATASET_TO_PREPARE == 'merged':
     dev_df = pd.concat([syn_dev_df, taiga_dev_df], axis=0)
     test_df = pd.concat([syn_test_df, taiga_test_df], axis=0)
 
+logging.info(f'Распаковка вложенных элементов...')
 train_df = train_df.reset_index()
 train_df = unfold_nested_elements(train_df)
 train_df['head'] = train_df['head'].apply(lambda x: [str(num) for num in x])
@@ -243,7 +255,8 @@ for target_name in dev_df.columns:
     if target_name not in train_df.columns:
         logging.warning(f'target_name {target_name} dev_df from not in train_df.columns')
 
-# Создание текстового файла всех исходных текстов обучающей выборки
+logging.info(f'Создание текстового файла всех исходных текстов')
+# Создание текстового файла всех исходных текстов
 with open(CORPUS_TEXTS_PATH, "w", encoding="utf-8") as file:
     for raw_text in train_df['source_text']:
         file.write(raw_text + '\n')
@@ -254,8 +267,8 @@ with open(CORPUS_TEXTS_PATH, "w", encoding="utf-8") as file:
     for raw_text in dev_df['source_text']:
         file.write(raw_text + '\n')
 
+logging.info('Сохранение полученных датасетов в формате .parquet')
 train_df.drop(columns=['index']).to_parquet(os.path.join(DATASET_PATH, f'{DATASET_TO_PREPARE}_train.parquet'), engine="fastparquet", index=False)
 test_df.drop(columns=['index']).to_parquet(os.path.join(DATASET_PATH, f'{DATASET_TO_PREPARE}_test.parquet'), engine="fastparquet", index=False)
 dev_df.drop(columns=['index']).to_parquet(os.path.join(DATASET_PATH, f'{DATASET_TO_PREPARE}_dev.parquet'), engine="fastparquet", index=False)
-
-
+logging.info('Готово!')

@@ -5,14 +5,6 @@
        Person, Poss, Animacy, Degree, Foreign, Variant, Number, Gender, NumForm, Aspect, Case, PronType, Tense, Abbr, Voice]
 '''
 
-user_query = "Это тестовое предложение. Оно содержит знаки пунктуации, а также гарматические ошибки. Как проверить работу классификатора? Очень просто! Достаточно лишь подготовить правильные тесты. Предложение очень длинное для проверки максимального контекста модели."
-
-# Грамматические атрибуты для вывода на экран. По умолчанию происходит генерация всех атрибутов
-target_names = ['upos', 'head', 'deprel', 'Mood', 'NumType', 'VerbForm',
-       'ExtPos', 'Reflex', 'Polarity', 'Typo', 'NameType', 'InflClass',
-       'Person', 'Poss', 'Animacy', 'Degree', 'Foreign', 'Variant', 'Number',
-       'Gender', 'NumForm', 'Aspect', 'Case', 'PronType', 'Tense', 'Abbr', 'Voice']
-
 import torch
 from model.model import MHAModel
 from scripts.tokenizer import BPETokenizer, SeparatorTokenizer
@@ -22,18 +14,16 @@ import json
 import os
 import sys
 import time
+import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 
+default_target_names = ['upos', 'head', 'deprel', 'Mood', 'NumType', 'VerbForm',
+       'ExtPos', 'Reflex', 'Polarity', 'Typo', 'NameType', 'InflClass',
+       'Person', 'Poss', 'Animacy', 'Degree', 'Foreign', 'Variant', 'Number',
+       'Gender', 'NumForm', 'Aspect', 'Case', 'PronType', 'Tense', 'Abbr', 'Voice']
 
-# Определение платформы запуска
-if sys.platform == 'linux':
-    load_dotenv(dotenv_path=(Path('.')/'.env.linux'))
-elif sys.platform == 'win32':
-    load_dotenv(dotenv_path=(Path('.')/'.env.win'))
-else:
-    raise ValueError('Ваша операционная система не поддерживается!')
-
+load_dotenv(dotenv_path=(Path('.')/'.env'))
 
 DATA_SAVE_FILEPATH = os.getenv('DATA_SAVE_FILEPATH')
 EXPERIMENT_NAME=os.getenv('EXPERIMENT_NAME')
@@ -41,7 +31,33 @@ CHECKPOINTS_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'checkp
 DATA_INFO_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data') # Место сохранения метрик валидации и обучения
 MODEL_CHECKPOINT = os.path.join(CHECKPOINTS_FILEPATH, f'final_tokens_model_params.pt')
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+parser = argparse.ArgumentParser(description='Тестирование модели морфологического классификатора')
+parser.add_argument(
+    'user_query',
+    type=str,
+    help='Предложение для обработки'
+)
+parser.add_argument(
+    '--morpheme',
+    type=str,
+    help='Строка с морфемами для вывода на экран, отделенные пробелом. Если не указано, то будет производиться анализ по всем морфемам',
+    default='upos head deprel Mood NumType VerbForm ExtPos Reflex Polarity Typo NameType InflClass Person Poss Animacy Degree Foreign Variant Number Gender NumForm Aspect Case PronType Tense Abbr Voice',
+)
+parser.add_argument(
+    '--device',
+    choices=['cpu', 'cuda'],
+    default='cuda',
+    help='Устройство для инференса модели.'
+)
+
+args = parser.parse_args()
+user_query = args.user_query
+target_names = (args.morpheme).split()
+device = args.device
+device = device if torch.cuda.is_available() else 'cpu'
+
+if len((set(default_target_names) | set(target_names))) != len(default_target_names):
+    raise ValueError('Передана морфема, предсказание которой невозможно!')
 
 # Чтение конфигурации словарей
 with open(f'{DATA_INFO_FILEPATH}/merged_vocabs_configuration.json', 'r', encoding='utf-8') as file:
