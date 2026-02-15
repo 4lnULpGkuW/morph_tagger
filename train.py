@@ -308,8 +308,6 @@ try:
             # total_loss, train_losses = compute_loss(predictions, batch_dict, target_names, target_weights, PAD_IDX)
             total_loss, train_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
 
-            break
-
             total_loss.backward()
 
             optimizer.step()
@@ -388,8 +386,6 @@ try:
             print(f'Validation: f1-score на признаке {key}: {valid_epoch_metrics[key]['f1']*100}%')
         print(f'Время выполнения {valid_end_time - valid_start_time}')
 
-        break
-
         # Блок с сохранением результатов обучения и изменением learning rate
         if epoch % CHECKPOINT_EPOCH == 0:
             logging.info('Сохранение результатов обучения...')
@@ -409,4 +405,4 @@ try:
 except KeyboardInterrupt:
     print('Принудительная остановка')
 
-# save_results_to_file(model, MODEL_SAVE_FILEPATH, train_states, validation_states)
+save_results_to_file(model, MODEL_SAVE_FILEPATH, train_states, validation_states)
