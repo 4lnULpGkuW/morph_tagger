@@ -25,7 +25,8 @@ TAIGA_PATH = os.getenv('TAIGA_PATH')
 TAIGA_TEXTS_PATH = os.getenv('TAIGA_TEXTS_PATH')
 
 MERGED_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged')
-MERGED_TEXTS_PATH = os.path.join(DATASETS_FOLDER_PATH, 'sintagrus_taiga_merged.txt')
+Path.mkdir(Path(MERGED_PATH), exist_ok=True)
+MERGED_TEXTS_PATH = os.path.join(MERGED_PATH, 'sintagrus_taiga_merged.txt')
 
 # Парсинг аргумента командной строки
 parser = argparse.ArgumentParser(description='Распаковка датасетов из формата conllu')
