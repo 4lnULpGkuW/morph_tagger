@@ -73,7 +73,7 @@ target_vocabs = {target_name: Vocabulary.from_serializable(target_vocabs_dict[ta
 vectorizer = Vectorizer(source_vocab, None, None, 'tokens')
 
 # Создание модели и токенизатора
-model = MHAModel.from_pretrained(MODEL_CHECKPOINT).to(device)
+model = MHAModel.from_pretrained(MODEL_CHECKPOINT, device).to(device)
 tokenizer = BPETokenizer.from_pretrained(f'{CHECKPOINTS_FILEPATH}/tokenizer.json')
 
 start_time = time.perf_counter()
