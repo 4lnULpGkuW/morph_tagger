@@ -262,7 +262,7 @@ if USE_PRETRAINED:
     with open(f"{DATA_INFO_FILEPATH}/{WORD_REPRESENTATION}_validation_states.json", "r", encoding="utf-8") as file:
         validation_states = json.load(file)
     
-    model = torch.load(MODEL_SAVE_FILEPATH, weights_only=False)
+    model = torch.load(MODEL_SAVE_FILEPATH, weights_only=False, map_location=torch.device(DEVICE))
 else:
     logging.info('Инициализация модели с нуля...')
     train_states = []

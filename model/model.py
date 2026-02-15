@@ -493,5 +493,5 @@ class MHAModel(nn.Module):
             return logits
     
     @classmethod
-    def from_pretrained(cls, checkpoint_path : str):
-        return torch.load(checkpoint_path, weights_only=False)
+    def from_pretrained(cls, checkpoint_path: str, device: str):
+        return torch.load(checkpoint_path, weights_only=False, map_location=torch.device(device))

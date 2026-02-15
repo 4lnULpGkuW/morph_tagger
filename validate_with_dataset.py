@@ -186,7 +186,7 @@ target_names = ['upos', 'head', 'deprel', 'Mood', 'NumType', 'VerbForm',
 source_name = 'source_text'
 
 
-model = torch.load(MODEL_SAVE_FILEPATH, weights_only=False)
+model = torch.load(MODEL_SAVE_FILEPATH, weights_only=False, map_location=torch.device(DEVICE))
 
 logging.info('Инициализация датасета...')
 dataset = CustomDataset(train_df, target_names, MAX_SUBTOKENS_COUNT, MAX_WORDS_COUNT,\
