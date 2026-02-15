@@ -64,10 +64,10 @@ class LearnablePositionalEncoding(nn.Module):
         self.padding_idx = padding_idx
         
         self.pos_embeddings = nn.Embedding(max_seq_len+1, embed_dim, padding_idx=padding_idx)
-        self.pos_idx = torch.arange(1, max_seq_len+1, device=device).unsqueeze(0) # [1, seq_size]
+        pos_idx = torch.arange(1, max_seq_len+1, device=device).unsqueeze(0) # [1, seq_size]
         
         # Регистрируем буфер
-        self.register_buffer('pos_idx', self.pos_idx)
+        self.register_buffer('pos_idx', pos_idx)
 
     def forward(self, x:torch.Tensor, key_padding_mask:torch.Tensor = None):
         batch_size = x.size(0)
