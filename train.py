@@ -189,38 +189,41 @@ def compute_loss(predictions:dict[str:torch.tensor], targets:dict[str:list[int]]
     return total_loss, losses
 
 
-def compute_metrics(predictions: dict[str, torch.Tensor], targets: dict[str, torch.Tensor], target_names: list[str], pad_idx: int = 0, average: str = 'macro') -> dict:
-    """Вычисляет метрики precision, recall, f1-score для каждой целевой переменной"""
-
-    predictions, targets = normalize_sizes(predictions, targets, target_names)
+def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macro'):
     metrics_dict = {}
-    
     for key in target_names:
-        # Получаем предсказанные индексы классов
-        _, pred_indices = predictions[key].max(dim=-1)
+
+        targets[key] = targets[key].reshape(BATCH_SIZE, -1)
+        predictions[key] = predictions[key].reshape(*targets[key].size(), -1)
+
+        # predictions[key]: [B, S, C]; targets[key]: [B, S]
+        _, pred_indices = predictions[key].max(dim=-1)  # [B, S]
         
-        pred_np = pred_indices.to('cpu').numpy()
-        target_np = targets[key].to('cpu').numpy()
-        
-        # Создаем маску для игнорирования pad_idx
-        mask = target_np != pad_idx
+        # Маска значимых токенов
+        mask = targets[key] != pad_idx  # [B, S]
+
+        errors_per_sentence = ((pred_indices != targets[key]) & mask).sum(dim=1)  # [B]
+        sentence_correct = errors_per_sentence == 0  # [B]
+        sentence_accuracy = sentence_correct.float().mean().item()
         
         # Фильтруем паддинг
-        pred_filtered = pred_np[mask]
-        target_filtered = target_np[mask]
+        pred_filtered = pred_indices[mask].cpu().numpy()
+        target_filtered = targets[key][mask].cpu().numpy()
+
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            target_filtered, pred_filtered, average=average, zero_division=0)
         
-        # Вычисляем метрики
-        precision, recall, f1, support = precision_recall_fscore_support(target_filtered, pred_filtered, average=average, zero_division=0)
-        
-        # Вычисляем accuracy (для полноты)
+        # Общая точность (accuracy) по токенам
+        # token_accuracy = (pred_indices[mask] == targets[key][mask]).float().mean().item()
         accuracy = (pred_filtered == target_filtered).mean()
         
         metrics_dict[key] = {
             'accuracy': accuracy,
+            'sentence_accuracy': sentence_accuracy,
             'precision': float(precision),
             'recall': float(recall),
-            'f1': float(f1)}
-    
+            'f1': float(f1),
+        }
     return metrics_dict
 
 
@@ -370,6 +373,7 @@ try:
             print('-'*20)
             print(f'Train: Ошибка на признаке {key}: {train_epoch_metrics[key]['mean_loss']}')
             print(f'Train: Точность на признаке {key}: {train_epoch_metrics[key]['accuracy']*100}%')
+            print(f'Train: Точность предложения на признаке {key}: {valid_epoch_metrics[key]['sentence_accuracy']*100}%')
             print(f'Train: precision на признаке {key}: {train_epoch_metrics[key]['precision']*100}%')
             print(f'Train: recall на признаке {key}: {train_epoch_metrics[key]['recall']*100}%')
             print(f'Train: f1-score на признаке {key}: {train_epoch_metrics[key]['f1']*100}%')
@@ -381,6 +385,7 @@ try:
             print('-'*20)
             print(f'Validation: Ошибка на признаке {key}: {valid_epoch_metrics[key]['mean_loss']}')
             print(f'Validation: Точность на признаке {key}: {valid_epoch_metrics[key]['accuracy']*100}%')
+            print(f'Validation: Точность предложения на признаке {key}: {valid_epoch_metrics[key]['sentence_accuracy']*100}%')
             print(f'Validation: precision на признаке {key}: {valid_epoch_metrics[key]['precision']*100}%')
             print(f'Validation: recall на признаке {key}: {valid_epoch_metrics[key]['recall']*100}%')
             print(f'Validation: f1-score на признаке {key}: {valid_epoch_metrics[key]['f1']*100}%')
