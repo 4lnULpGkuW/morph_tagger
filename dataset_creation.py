@@ -161,8 +161,8 @@ def unpack_conllu_and_create_dataframes(dataset_path, train_list, test_list):
         train_df = pd.concat((train_df, temp_df))
 
     for datapath in test_list:
-        data_file = open(os.path.join(dataset_path, datapath), 'r', encoding='utf-8')
-        parsed_list = list(parse_incr(data_file))
+        with open(os.path.join(dataset_path, datapath), 'r', encoding='utf-8') as data_file:
+            parsed_list = list(parse_incr(data_file))
 
         source_text = []
         source_words = []
