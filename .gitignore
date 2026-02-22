@@ -7,3 +7,5 @@ ignore*
 .env.win
 .env
 notes.md
+*.conllu
+*.parquet

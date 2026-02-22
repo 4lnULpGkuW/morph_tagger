@@ -166,10 +166,10 @@ def save_results_to_file(validation_states:list=None):
             logging.info('Метрики валидации сохранены')
 
 logging.info('Загрука датасетов...')
-# Для валидации будем использовать датасет синтагрус. Для обучения и синтагрус и тайга
-train_df = None
-validation_df = pd.read_parquet(os.path.join(DATASETS_FOLDER_PATH, f'{DATASET_TO_PREPARE}_prepared_dev.parquet'))
-test_df = pd.read_parquet(os.path.join(DATASETS_FOLDER_PATH, f'{DATASET_TO_PREPARE}_prepared_test.parquet'))
+if SPLIT == 'validation':
+    dataframe = pd.read_parquet(os.path.join(DATASETS_FOLDER_PATH, f'{DATASET_TO_PREPARE}_prepared_dev.parquet'))
+else:
+    dataframe = pd.read_parquet(os.path.join(DATASETS_FOLDER_PATH, f'{DATASET_TO_PREPARE}_prepared_test.parquet'))
 
 
 logging.info('Чтение конфигурации словаря...')
@@ -192,8 +192,8 @@ source_name = 'source_text'
 model = torch.load(MODEL_SAVE_FILEPATH, weights_only=False, map_location=torch.device(DEVICE))
 
 logging.info('Инициализация датасета...')
-dataset = CustomDataset(train_df, target_names, MAX_SUBTOKENS_COUNT, MAX_WORDS_COUNT,\
-                        MAX_LETTERS_COUNT, valid_df=validation_df, test_df=test_df)
+dataset = CustomDataset(None, target_names, MAX_SUBTOKENS_COUNT, MAX_WORDS_COUNT,\
+                        MAX_LETTERS_COUNT, valid_df=dataframe, test_df=dataframe)
 
 logging.info('Перемещение модели на device')
 model = model.to(device=DEVICE)
