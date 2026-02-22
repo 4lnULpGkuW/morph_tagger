@@ -329,7 +329,7 @@ try:
         batch_generator = generate_batches(dataset, BATCH_SIZE, SHUFFLE, DROP_LAST, DEVICE)
         epoch_sum_valid_loss = 0.0
         epoch_running_valid_loss = 0.0
-        valid_epoch_metrics = {key:{'accuracy' : 0.0, 'precision' : 0.0, 'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
+        valid_epoch_metrics = {key:{'accuracy' : 0.0, 'precision' : 0.0, 'sentence_accuracy' : 0.0, 'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
         model.eval()
         valid_start_time = time.time()
 
