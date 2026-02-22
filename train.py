@@ -74,7 +74,7 @@ parser.add_argument(
     '--device',
     choices=['cpu', 'cuda'],
     default='cuda',
-    help='Устройство для инференса модели.'
+    help='Устройство для вычислений.'
 )
 parser.add_argument(
     '--checkpoint_epoch',
@@ -214,7 +214,6 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
             target_filtered, pred_filtered, average=average, zero_division=0)
         
         # Общая точность (accuracy) по токенам
-        # token_accuracy = (pred_indices[mask] == targets[key][mask]).float().mean().item()
         accuracy = (pred_filtered == target_filtered).mean()
         
         metrics_dict[key] = {
@@ -295,7 +294,7 @@ try:
         batch_generator = generate_batches(dataset, BATCH_SIZE, SHUFFLE, DROP_LAST, DEVICE)
         epoch_sum_train_loss = 0.0
         epoch_running_train_loss = 0.0
-        train_epoch_metrics = {key:{'accuracy' : 0.0, 'precision' : 0.0, 'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
+        train_epoch_metrics = {key:{'accuracy' : 0.0, 'precision' : 0.0, 'sentence_accuracy' : 0.0, 'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
         model.train()
         for batch_idx, batch_dict in enumerate(batch_generator):
 
