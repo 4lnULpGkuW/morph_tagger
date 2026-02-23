@@ -454,5 +454,5 @@ try:
 
 except KeyboardInterrupt:
     logging.info('Принудительная остановка.')
-    logging.info('Сохранение результатов обучения...')
-    save_results_to_file(model, MODEL_SAVE_FILEPATH, train_states, validation_states)
+logging.info('Сохранение результатов обучения...')
+save_results_to_file(model, MODEL_SAVE_FILEPATH, train_states, validation_states)
