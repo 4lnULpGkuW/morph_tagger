@@ -122,17 +122,24 @@ def compute_loss(predictions:dict[str:torch.tensor], targets:dict[str:list[int]]
 
 def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macro'):
     metrics_dict = {}
+    first_key = target_names[0]
+    batch_size, seq_len = targets[first_key].size()
+    device = predictions[first_key].device
+    correct_words_all = torch.ones(batch_size, seq_len, dtype=torch.bool, device=device)
+    
     for key in target_names:
-
-        targets[key] = targets[key].reshape(BATCH_SIZE, -1)
-        predictions[key] = predictions[key].reshape(*targets[key].size(), -1)
-
         # predictions[key]: [B, S, C]; targets[key]: [B, S]
         _, pred_indices = predictions[key].max(dim=-1)  # [B, S]
         
         # Маска значимых токенов
         mask = targets[key] != pad_idx  # [B, S]
-
+        
+        correct = (pred_indices == targets[key])  # [B, S]
+        
+        # Общая правильность слова
+        correct_words_all = correct_words_all & correct
+        
+        # Вычисляем метрики для текущего признака
         errors_per_sentence = ((pred_indices != targets[key]) & mask).sum(dim=1)  # [B]
         sentence_correct = errors_per_sentence == 0  # [B]
         sentence_accuracy = sentence_correct.float().mean().item()
@@ -140,12 +147,9 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
         # Фильтруем паддинг
         pred_filtered = pred_indices[mask].cpu().numpy()
         target_filtered = targets[key][mask].cpu().numpy()
-
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            target_filtered, pred_filtered, average=average, zero_division=0)
         
-        # Общая точность (accuracy) по токенам
-        # token_accuracy = (pred_indices[mask] == targets[key][mask]).float().mean().item()
+        precision, recall, f1, _ = precision_recall_fscore_support(target_filtered, pred_filtered, average=average, zero_division=0)
+        
         accuracy = (pred_filtered == target_filtered).mean()
         
         metrics_dict[key] = {
@@ -155,6 +159,21 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
             'recall': float(recall),
             'f1': float(f1),
         }
+    
+    # Берем маску от первого признака (везде паддинг одинаков)
+    mask = targets[first_key] != pad_idx
+    
+    # Точность предсказания всех морфем в слове
+    word_accuracy = correct_words_all[mask].float().mean().item()
+    
+    # Точность предсказания предложения целиком (все слова в предложении верны)
+    sentence_errors = (~correct_words_all & mask).sum(dim=1)  # [B]
+    sentence_correct_global = sentence_errors == 0
+    sentence_accuracy_global = sentence_correct_global.float().mean().item()
+    
+    metrics_dict['word_accuracy'] = word_accuracy
+    metrics_dict['sentence_accuracy_global'] = sentence_accuracy_global
+    
     return metrics_dict
 
 
@@ -207,8 +226,11 @@ batch_generator = generate_batches(dataset, BATCH_SIZE, SHUFFLE, DROP_LAST, DEVI
 epoch_sum_valid_loss = 0.0
 epoch_running_valid_loss = 0.0
 mean_generation_time = 0.0
-valid_epoch_metrics = {key:{'accuracy' : 0.0, 'sentence_accuracy' : 0.0, 'precision' : 0.0, 
+valid_epoch_metrics = {key:{'accuracy' : 0.0, 'sentence_accuracy' : 0.0, 'precision' : 0.0,
                             'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
+valid_epoch_metrics['word_accuracy'] = 0.0
+valid_epoch_metrics['sentence_accuracy_global'] = 0.0
+
 validation_states = []
 model.eval()
 
@@ -225,6 +247,8 @@ with torch.no_grad():
             predictions = model(tokens=batch_dict['input_ids'], letters=batch_dict['letters'])
         end_generation_time = time.time()
 
+        cur_metrics = compute_metrics(predictions, batch_dict, target_names, PAD_IDX)
+        
         total_loss, valid_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
 
         # Средние потери, точность и время генерации
@@ -232,11 +256,16 @@ with torch.no_grad():
         mean_generation_time += ((end_generation_time - start_generation_time) - mean_generation_time) / (batch_idx + 1)
         epoch_sum_valid_loss += total_loss.item()
 
-        cur_metrics = compute_metrics(predictions, batch_dict, target_names, PAD_IDX)
+        # Обновляем метрики для каждого признака
         for key in target_names:
             for metric, value in cur_metrics[key].items():
                 valid_epoch_metrics[key][metric] += (value - valid_epoch_metrics[key][metric]) / (batch_idx + 1)
             valid_epoch_metrics[key]['mean_loss'] += (valid_losses[key].item() - valid_epoch_metrics[key]['mean_loss']) / (batch_idx + 1)
+        
+        # Обновляем агрегированные метрики
+        valid_epoch_metrics['word_accuracy'] += (cur_metrics['word_accuracy'] - valid_epoch_metrics['word_accuracy']) / (batch_idx + 1)
+        valid_epoch_metrics['sentence_accuracy_global'] += (cur_metrics['sentence_accuracy_global'] - valid_epoch_metrics['sentence_accuracy_global']) / (batch_idx + 1)
+
 valid_end_time = time.time()
 
 validation_states.append(valid_epoch_metrics)
@@ -253,6 +282,10 @@ for key in target_names:
     print(f'Validation: precision на признаке {key}: {valid_epoch_metrics[key]['precision']*100}%')
     print(f'Validation: recall на признаке {key}: {valid_epoch_metrics[key]['recall']*100}%')
     print(f'Validation: f1-score на признаке {key}: {valid_epoch_metrics[key]['f1']*100}%')
+print('-'*20)
+print('-'*20)
+print(f'Validation: Точность предсказания всех морфем в слове: {valid_epoch_metrics["word_accuracy"]*100}%')
+print(f'Validation: Точность предсказания предложения целиком: {valid_epoch_metrics["sentence_accuracy_global"]*100}%')
 print(f'Среднее время генерации при размере батча {BATCH_SIZE}: {mean_generation_time}')
 print(f'Время выполнения всего цикла тестирования: {valid_end_time - valid_start_time}')
 
