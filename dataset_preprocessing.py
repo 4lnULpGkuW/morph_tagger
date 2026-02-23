@@ -62,11 +62,18 @@ parser.add_argument(
     help='Выбор минимальной частоты встречаемости соседних символов для их слияния в один токен при обучении токенизатора. ' \
     'Например, при MFP = 200, символы не будут обьеденены в токен, если встретились по соседству менее 200 раз.'
 )
+parser.add_argument(
+    '--exclude_unused_grammemes',
+    action='store_true',
+    help='Определяет, исключать ли граммемы, не принадлежащие слову.' \
+    'По умолчанию, если слову гарммема не принадлежит, то целевая метка для данной граммемы - None. Если граммемы исключать, то целевая метка - padding',
+)
 args = parser.parse_args()
 
 DATASET_TO_PREPARE = args.dataset
 USE_PRETRAINDED_TOKENIZER = True if args.pretrained else False
 MIN_FRECQUENCY_PAIR = args.mfp
+EXCLUDE_UNUSED_GRAMMEMES = True if args.exclude_unused_grammemes else False
 logging.info(f'''Текущие параметры обработки датасета и конфигурация токенизатора:
              DATASET_TO_PREPARE: {DATASET_TO_PREPARE}
              USE_PRETRAINDED_TOKENIZER: {USE_PRETRAINDED_TOKENIZER}
@@ -264,6 +271,13 @@ else:
     source_vocab = Vocabulary(bos_token=BOS_TOKEN, eos_token=EOS_TOKEN, pad_token=PAD_TOKEN, mask_token=MASK_TOKEN, unk_token=UNK_TOKEN, add_bos_eos_tokens=ADD_BOS_EOS_TOKENS)
     target_vocabs = {target_name: Vocabulary(bos_token=BOS_TOKEN, eos_token=EOS_TOKEN, pad_token=PAD_TOKEN,\
                                             mask_token=MASK_TOKEN, unk_token=UNK_TOKEN, add_bos_eos_tokens=ADD_BOS_EOS_TOKENS) for target_name in target_names}
+    target_vocabs = {}
+    for target_name in target_names:
+        target_vocabs[target_name] = Vocabulary(bos_token=BOS_TOKEN, eos_token=EOS_TOKEN, pad_token=PAD_TOKEN,
+                                                mask_token=MASK_TOKEN, unk_token=UNK_TOKEN, add_bos_eos_tokens=ADD_BOS_EOS_TOKENS)
+        # Если хотим исключить отсутствующие граммемы из обучающих данных, то заменяем их на паддинг
+        if EXCLUDE_UNUSED_GRAMMEMES:
+            target_vocabs[target_name].token_to_idx['None'] = target_vocabs[target_name].pad_idx
 
     # Заполненеие словаря входных токенов и словаря таргет меток
     for df in [train_df, validation_df, test_df]:
