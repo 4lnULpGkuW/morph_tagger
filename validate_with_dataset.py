@@ -180,7 +180,7 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
 def save_results_to_file(validation_states:list=None):
     '''Сохраняет метрики в файл'''
     if validation_states is not None:
-        with open(os.path.join(DATA_INFO_FILEPATH, f"{WORD_REPRESENTATION}_validation_states.json"), "w", encoding="utf-8") as file:
+        with open(os.path.join(DATA_INFO_FILEPATH, f"dataset_validation_states.json"), "w", encoding="utf-8") as file:
             json.dump(validation_states, file, indent=4, ensure_ascii=False)
             logging.info('Метрики валидации сохранены')
 
