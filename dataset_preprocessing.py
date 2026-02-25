@@ -275,10 +275,7 @@ else:
     for target_name in target_names:
         target_vocabs[target_name] = Vocabulary(bos_token=BOS_TOKEN, eos_token=EOS_TOKEN, pad_token=PAD_TOKEN,
                                                 mask_token=MASK_TOKEN, unk_token=UNK_TOKEN, add_bos_eos_tokens=ADD_BOS_EOS_TOKENS)
-        # Если хотим исключить отсутствующие граммемы из обучающих данных, то заменяем их на паддинг
-        if EXCLUDE_UNUSED_GRAMMEMES:
-            target_vocabs[target_name].token_to_idx['None'] = target_vocabs[target_name].pad_idx
-
+        
     # Заполненеие словаря входных токенов и словаря таргет меток
     for df in [train_df, validation_df, test_df]:
         for row in range(len(df)):
@@ -294,6 +291,11 @@ else:
         for i in range(len(df)):
             for word in df.loc[i, 'source_words']:
                 letters_vocab.add_tokens(list(word))
+
+    # Если хотим исключить отсутствующие граммемы из обучающих данных, то заменяем их на паддинг
+    if EXCLUDE_UNUSED_GRAMMEMES:
+        for target_name in target_names:
+            target_vocabs[target_name].token_to_idx['None'] = target_vocabs[target_name].pad_idx
 
     # Сохранение словарей
     source_vocab.to_json(f'{DATA_INFO_FILEPATH}/{DATASET_TO_PREPARE}_source_vocab.json')
