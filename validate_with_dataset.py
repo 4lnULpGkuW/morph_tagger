@@ -125,33 +125,51 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
     first_key = target_names[0]
     batch_size, seq_len = targets[first_key].size()
     device = predictions[first_key].device
+
+    # Инициализация: все позиции "правильные" до проверки
     correct_words_all = torch.ones(batch_size, seq_len, dtype=torch.bool, device=device)
-    
+    # Маска: позиция является словом хотя бы для одного ключа
+    any_non_pad = torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
+    sentence_accuracy_global = 1.0
+
     for key in target_names:
-        # predictions[key]: [B, S, C]; targets[key]: [B, S]
-        _, pred_indices = predictions[key].max(dim=-1)  # [B, S]
-        
-        # Маска значимых токенов
-        mask = targets[key] != pad_idx  # [B, S]
-        
-        correct = (pred_indices == targets[key])  # [B, S]
-        
-        # Общая правильность слова
-        correct_words_all = correct_words_all & correct
-        
-        # Вычисляем метрики для текущего признака
-        errors_per_sentence = ((pred_indices != targets[key]) & mask).sum(dim=1)  # [B]
-        sentence_correct = errors_per_sentence == 0  # [B]
+        _, pred_indices = predictions[key].max(dim=-1)
+        mask = (targets[key] != pad_idx)
+
+        correct = (pred_indices == targets[key])
+        # ===== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ =====
+        # Паддинг-позиции данного ключа не должны портить общий результат:
+        # если позиция — паддинг для этого ключа, считаем её "правильной"
+        correct_or_pad = correct | ~mask
+        correct_words_all = correct_words_all & correct_or_pad
+
+        # Собираем объединённую маску реальных (не-паддинг) позиций
+        any_non_pad = any_non_pad | mask
+
+        errors_per_sentence = ((pred_indices != targets[key]) & mask).sum(dim=1)
+        sentence_correct = errors_per_sentence == 0
         sentence_accuracy = sentence_correct.float().mean().item()
-        
-        # Фильтруем паддинг
+
         pred_filtered = pred_indices[mask].cpu().numpy()
         target_filtered = targets[key][mask].cpu().numpy()
-        
-        precision, recall, f1, _ = precision_recall_fscore_support(target_filtered, pred_filtered, average=average, zero_division=0)
-        
+
+        if len(target_filtered) == 0:
+            metrics_dict[key] = {
+                'accuracy': 1.0,
+                'sentence_accuracy': 1.0,
+                'precision': 1.0,
+                'recall': 1.0,
+                'f1': 1.0,
+            }
+            continue
+
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            target_filtered, pred_filtered, average=average, zero_division=0
+        )
         accuracy = (pred_filtered == target_filtered).mean()
-        
+        if accuracy != 1.0:
+            sentence_accuracy_global = 0.0
+
         metrics_dict[key] = {
             'accuracy': accuracy,
             'sentence_accuracy': sentence_accuracy,
@@ -159,21 +177,18 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
             'recall': float(recall),
             'f1': float(f1),
         }
-    
-    # Берем маску от первого признака (везде паддинг одинаков)
-    mask = targets[first_key] != pad_idx
-    
-    # Точность предсказания всех морфем в слове
-    word_accuracy = correct_words_all[mask].float().mean().item()
-    
-    # Точность предсказания предложения целиком (все слова в предложении верны)
-    sentence_errors = (~correct_words_all & mask).sum(dim=1)  # [B]
-    sentence_correct_global = sentence_errors == 0
-    sentence_accuracy_global = sentence_correct_global.float().mean().item()
-    
+
+    total_non_pad = any_non_pad.sum().item()
+    if total_non_pad == 0:
+        word_accuracy = 1.0
+        sentence_accuracy_global = 1.0
+    else:
+        # Считаем только позиции, где есть хотя бы один реальный таргет
+        word_accuracy = (correct_words_all & any_non_pad).sum().item() / total_non_pad
+
     metrics_dict['word_accuracy'] = word_accuracy
     metrics_dict['sentence_accuracy_global'] = sentence_accuracy_global
-    
+
     return metrics_dict
 
 
@@ -249,20 +264,22 @@ with torch.no_grad():
 
         cur_metrics = compute_metrics(predictions, batch_dict, target_names, PAD_IDX)
         
-        total_loss, valid_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
+        # total_loss, valid_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
 
         # Средние потери, точность и время генерации
-        epoch_running_valid_loss += (total_loss.item() - epoch_running_valid_loss) / (batch_idx + 1)
+        # epoch_running_valid_loss += (total_loss.item() - epoch_running_valid_loss) / (batch_idx + 1)
         mean_generation_time += ((end_generation_time - start_generation_time) - mean_generation_time) / (batch_idx + 1)
-        epoch_sum_valid_loss += total_loss.item()
+        # epoch_sum_valid_loss += total_loss.item()
 
         # Обновляем метрики для каждого признака
         for key in target_names:
             for metric, value in cur_metrics[key].items():
                 valid_epoch_metrics[key][metric] += (value - valid_epoch_metrics[key][metric]) / (batch_idx + 1)
-            valid_epoch_metrics[key]['mean_loss'] += (valid_losses[key].item() - valid_epoch_metrics[key]['mean_loss']) / (batch_idx + 1)
+            # valid_epoch_metrics[key]['mean_loss'] += (valid_losses[key].item() - valid_epoch_metrics[key]['mean_loss']) / (batch_idx + 1)
         
         # Обновляем агрегированные метрики
+        # print(f"cur_metrics['word_accuracy']{cur_metrics['word_accuracy']}")
+        # print(f"cur_metrics['sentence_accuracy_global']{cur_metrics['sentence_accuracy_global']}")
         valid_epoch_metrics['word_accuracy'] += (cur_metrics['word_accuracy'] - valid_epoch_metrics['word_accuracy']) / (batch_idx + 1)
         valid_epoch_metrics['sentence_accuracy_global'] += (cur_metrics['sentence_accuracy_global'] - valid_epoch_metrics['sentence_accuracy_global']) / (batch_idx + 1)
 
