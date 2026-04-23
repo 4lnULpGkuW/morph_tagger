@@ -38,7 +38,6 @@ CHECKPOINTS_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'checkp
 DATA_INFO_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'data')
 DATASET_SAVE_FILEPATH = os.path.join(DATA_SAVE_FILEPATH, EXPERIMENT_NAME, 'dataset') # Путь для сохранения подготовленного датасета. Подготовленный датасет включает в себя столбцы с индексами входов и выходов
 
-
 MODEL_SAVE_FILEPATH = os.path.join(CHECKPOINTS_FILEPATH, f'final_{WORD_REPRESENTATION}_model_params.pt')
 
 Path.mkdir(Path(DATA_SAVE_FILEPATH, EXPERIMENT_NAME), exist_ok=True)
@@ -86,6 +85,12 @@ parser.add_argument(
     default=2,
     help='Сохранение параметров модели и метрик обучения каждые checkpoint_epoch эпох. default = 2'
 )
+parser.add_argument(
+    '--mask_prob',
+    type=float,
+    default=0.15,
+    help='Вероятность маскирования токена (0.0 - 1.0). default = 0.15'
+)
 
 # Параметры обучения модели
 USE_CLASSES_WEIGHTS = False
@@ -124,17 +129,14 @@ EPOCHS = args.epochs
 CHECKPOINT_EPOCH = args.checkpoint_epoch
 DEVICE = args.device
 DEVICE = DEVICE if torch.cuda.is_available() else 'cpu'
+MASK_PROB = args.mask_prob
 logging.info(f'''Текущие параметры обработки датасета и конфигурация токенизатора:
              DATASET_TO_PREPARE: {DATASET_TO_PREPARE}
              BATCH_SIZE: {BATCH_SIZE}
              CHECKPOINT_EPOCH: {CHECKPOINT_EPOCH}
              DEVICE: {DEVICE}
+             MASK_PROB: {MASK_PROB}
              USE_PRETRAINED: {USE_PRETRAINED}''')
-
-# print(torch.backends.cuda.flash_sdp_enabled())
-# print(torch.backends.cuda.mem_efficient_sdp_enabled())
-# print(torch.backends.cuda.math_sdp_enabled())
-
 
 def generate_batches(dataset:CustomDataset, batch_size:int, shuffle:bool=True, drop_last:bool=True, device='cpu'):
     '''Создает батчи из датасета и переносит данные на девайс'''
@@ -144,7 +146,6 @@ def generate_batches(dataset:CustomDataset, batch_size:int, shuffle:bool=True, d
         for name, _ in data_dict.items():
             out_data_dict[name] = data_dict[name].to(device)
         yield out_data_dict
-
 
 def save_results_to_file(model, model_filepath:str, train_states:list=None, validation_states:list=None):
     '''Сохраняет параметры модели и метрики обучения в файлы'''
@@ -164,7 +165,6 @@ def save_results_to_file(model, model_filepath:str, train_states:list=None, vali
             json.dump(validation_states, file, indent=4, ensure_ascii=False)
             logging.info('Метрики валидации сохранены')
 
-
 def normalize_sizes(predictions:dict[str:torch.tensor], targets:dict[str:torch.tensor], target_names:list[str]):
     for key in target_names:
         # Для predictions: [B, S, C] -> [B*S, C]
@@ -177,21 +177,15 @@ def normalize_sizes(predictions:dict[str:torch.tensor], targets:dict[str:torch.t
     
     return predictions, targets
 
-
-# def compute_loss(predictions:dict[str:torch.tensor], targets:dict[str:list[int]], target_names:list[str], target_weights:dict[str:float], pad_idx:int=0):
 def compute_loss(predictions:dict[str:torch.tensor], targets:dict[str:list[int]], target_names:list[str], pad_idx:int=0):
     predictions, targets = normalize_sizes(predictions, targets, target_names)
     losses = {}
     total_loss = 0
     for key in target_names:
-        # target_weights[key]['classes_weights'] = target_weights[key]['classes_weights'].to(DEVICE)
-        # losses[key] = torch.nn.functional.cross_entropy(predictions[key], targets[key], weight=target_weights[key]['classes_weights'], ignore_index=pad_idx)
         losses[key] = torch.nn.functional.cross_entropy(predictions[key], targets[key], ignore_index=pad_idx)
-        # total_loss += losses[key] * target_weights[key]['grammem_weight']
         total_loss += losses[key]
 
     return total_loss, losses
-
 
 def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macro'):
     metrics_dict = {}
@@ -201,7 +195,6 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
     correct_words_all = torch.ones(batch_size, seq_len, dtype=torch.bool, device=device)
     
     for key in target_names:
-        # predictions[key]: [B, S, C]; targets[key]: [B, S]
         _, pred_indices = predictions[key].max(dim=-1)  # [B, S]
         
         # Маска значимых токенов
@@ -251,12 +244,9 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
 
 
 logging.info('Загрука датасетов...')
-# Для валидации будем использовать датасет синтагрус. Для обучения и синтагрус и тайга
 train_df = pd.read_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_train.parquet'))
-# validation_df = pd.read_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_dev.parquet'))
 validation_df = pd.read_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'syntagrus_prepared_dev.parquet')) # Для валидации используем только syntagrus
 test_df = pd.read_parquet(os.path.join(DATASET_SAVE_FILEPATH, f'{DATASET_TO_PREPARE}_prepared_test.parquet'))
-
 
 logging.info('Чтение конфигурации словаря...')
 # Конфигурация словарей для определения модели
@@ -270,14 +260,13 @@ SOURCE_VOCAB_LEN = vocabs_config['SOURCE_VOCAB_LEN']
 LETTERS_VOCAB_LEN = vocabs_config['LETTERS_VOCAB_LEN']
 TRG_VOCABS_LEN = vocabs_config['TRG_VOCABS_LEN']
 PAD_IDX = vocabs_config['PAD_IDX']
-
+MASK_IDX = vocabs_config['MASK_IDX']
 
 target_names = ['upos', 'head', 'deprel', 'Mood', 'NumType', 'VerbForm',
        'ExtPos', 'Reflex', 'Polarity', 'Typo', 'NameType', 'InflClass',
        'Person', 'Poss', 'Animacy', 'Degree', 'Foreign', 'Variant', 'Number',
        'Gender', 'NumForm', 'Aspect', 'Case', 'PronType', 'Tense', 'Abbr', 'Voice']
 source_name = 'source_text'
-
 
 if USE_PRETRAINED:
     logging.info('Загрузка предобученной модели и предыдущих метрик обучения...')
@@ -323,25 +312,40 @@ try:
                                     'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
         train_epoch_metrics['word_accuracy'] = 0.0
         train_epoch_metrics['sentence_accuracy_global'] = 0.0
+        
         model.train()
         for batch_idx, batch_dict in enumerate(batch_generator):
 
             optimizer.zero_grad()
             
+            # Логика маскирования
+            input_ids = batch_dict['input_ids'].clone()
+            letters = batch_dict.get('letters', None)
+            
+            # Маскируем MASK_PROB токенов, игнорируя PAD_IDX
+            prob_matrix = torch.full(input_ids.shape, MASK_PROB, device=DEVICE)
+            prob_matrix.masked_fill_(input_ids == PAD_IDX, 0.0)
+            mask = torch.bernoulli(prob_matrix).bool()
+            
+            input_ids[mask] = MASK_IDX
+            
+            # Если используются буквы, забиваем их нулями для замаскированных слов,
+            # чтобы модель не "подсматривала" в состав слова
+            if letters is not None:
+                letters = letters.clone()
+                letters[mask] = PAD_IDX
+
             if WORD_REPRESENTATION == 'tokens':
-                predictions = model(tokens=batch_dict['input_ids'], letters=None)
+                predictions = model(tokens=input_ids, letters=None)
             elif WORD_REPRESENTATION == 'letters':
-                predictions = model(tokens=None, letters=batch_dict['letters'])
+                predictions = model(tokens=None, letters=letters)
             else:
-                predictions = model(tokens=batch_dict['input_ids'], letters=batch_dict['letters'])
+                predictions = model(tokens=input_ids, letters=letters)
 
             cur_metrics = compute_metrics(predictions, batch_dict, target_names, PAD_IDX)
-
-            # total_loss, train_losses = compute_loss(predictions, batch_dict, target_names, target_weights, PAD_IDX)
             total_loss, train_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
 
             total_loss.backward()
-
             optimizer.step()
 
             # Метрики
@@ -364,12 +368,14 @@ try:
                                     'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
         valid_epoch_metrics['word_accuracy'] = 0.0
         valid_epoch_metrics['sentence_accuracy_global'] = 0.0
+        
         model.eval()
         valid_start_time = time.time()
 
         with torch.no_grad():
             for batch_idx, batch_dict in enumerate(batch_generator):
                 
+                # При валидации передаем оригинальные неискаженные данные (без маскирования)
                 if WORD_REPRESENTATION == 'tokens':
                     predictions = model(tokens=batch_dict['input_ids'], letters=None)
                 elif WORD_REPRESENTATION == 'letters':
@@ -378,8 +384,6 @@ try:
                     predictions = model(tokens=batch_dict['input_ids'], letters=batch_dict['letters'])
 
                 cur_metrics = compute_metrics(predictions, batch_dict, target_names, PAD_IDX)
-
-                # total_loss, valid_losses = compute_loss(predictions, batch_dict, target_names, target_weights, PAD_IDX)
                 total_loss, valid_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
 
                 # Средние потери и точность
@@ -408,32 +412,32 @@ try:
         print(f'Train: Средняя ошибка эпохи {epoch_running_train_loss}')
         for key in target_names:
             print('-'*20)
-            print(f'Train: Ошибка на признаке {key}: {train_epoch_metrics[key]['mean_loss']}')
-            print(f'Train: Точность на признаке {key}: {train_epoch_metrics[key]['accuracy']*100}%')
-            print(f'Train: Точность предложения на признаке {key}: {valid_epoch_metrics[key]['sentence_accuracy']*100}%')
-            print(f'Train: precision на признаке {key}: {train_epoch_metrics[key]['precision']*100}%')
-            print(f'Train: recall на признаке {key}: {train_epoch_metrics[key]['recall']*100}%')
-            print(f'Train: f1-score на признаке {key}: {train_epoch_metrics[key]['f1']*100}%')
+            print(f"Train: Ошибка на признаке {key}: {train_epoch_metrics[key]['mean_loss']}")
+            print(f"Train: Точность на признаке {key}: {train_epoch_metrics[key]['accuracy']*100}%")
+            print(f"Train: Точность предложения на признаке {key}: {valid_epoch_metrics[key]['sentence_accuracy']*100}%")
+            print(f"Train: precision на признаке {key}: {train_epoch_metrics[key]['precision']*100}%")
+            print(f"Train: recall на признаке {key}: {train_epoch_metrics[key]['recall']*100}%")
+            print(f"Train: f1-score на признаке {key}: {train_epoch_metrics[key]['f1']*100}%")
         print('-'*20)
         print('-'*20)
-        print(f'Train: Точность предсказания всех морфем в слове: {train_epoch_metrics['word_accuracy']*100}%')
-        print(f'Train: Точность предсказания предложения целиком: {train_epoch_metrics['sentence_accuracy_global']*100}%')
+        print(f"Train: Точность предсказания всех морфем в слове: {train_epoch_metrics['word_accuracy']*100}%")
+        print(f"Train: Точность предсказания предложения целиком: {train_epoch_metrics['sentence_accuracy_global']*100}%")
         print(f'Время выполнения {train_end_time - train_start_time}')
 
         print('-'*40)
         print(f'Validation: Средняя ошибка эпохи {epoch_running_valid_loss}')
         for key in target_names:
             print('-'*20)
-            print(f'Validation: Ошибка на признаке {key}: {valid_epoch_metrics[key]['mean_loss']}')
-            print(f'Validation: Точность на признаке {key}: {valid_epoch_metrics[key]['accuracy']*100}%')
-            print(f'Validation: Точность предложения на признаке {key}: {valid_epoch_metrics[key]['sentence_accuracy']*100}%')
-            print(f'Validation: precision на признаке {key}: {valid_epoch_metrics[key]['precision']*100}%')
-            print(f'Validation: recall на признаке {key}: {valid_epoch_metrics[key]['recall']*100}%')
-            print(f'Validation: f1-score на признаке {key}: {valid_epoch_metrics[key]['f1']*100}%')
+            print(f"Validation: Ошибка на признаке {key}: {valid_epoch_metrics[key]['mean_loss']}")
+            print(f"Validation: Точность на признаке {key}: {valid_epoch_metrics[key]['accuracy']*100}%")
+            print(f"Validation: Точность предложения на признаке {key}: {valid_epoch_metrics[key]['sentence_accuracy']*100}%")
+            print(f"Validation: precision на признаке {key}: {valid_epoch_metrics[key]['precision']*100}%")
+            print(f"Validation: recall на признаке {key}: {valid_epoch_metrics[key]['recall']*100}%")
+            print(f"Validation: f1-score на признаке {key}: {valid_epoch_metrics[key]['f1']*100}%")
         print('-'*20)
         print('-'*20)
-        print(f'Validation: Точность предсказания всех морфем в слове: {valid_epoch_metrics['word_accuracy']*100}%')
-        print(f'Validation: Точность предсказания предложения целиком: {valid_epoch_metrics['sentence_accuracy_global']*100}%')
+        print(f"Validation: Точность предсказания всех морфем в слове: {valid_epoch_metrics['word_accuracy']*100}%")
+        print(f"Validation: Точность предсказания предложения целиком: {valid_epoch_metrics['sentence_accuracy_global']*100}%")
         print(f'Время выполнения {valid_end_time - valid_start_time}')
 
         # Блок с сохранением результатов обучения и изменением learning rate
@@ -442,7 +446,7 @@ try:
             save_results_to_file(model, os.path.join(CHECKPOINTS_FILEPATH, f'iter_{epoch}_{WORD_REPRESENTATION}_model_params.pt'),\
                                  train_states, validation_states)
             torch.save(model, MODEL_SAVE_FILEPATH)
-        # Реализация нелинейного расписания изменения learning rate. Такое расписание показывает наискорейшую сходимость согласно наблюдениям
+        # Реализация нелинейного расписания изменения learning rate
         if epoch == 15:
             LEARNING_RATE = 5e-5
             logging.info(f'Изменение скорости обучения на эпохе {epoch}. Новая скорость обучения: {LEARNING_RATE}')

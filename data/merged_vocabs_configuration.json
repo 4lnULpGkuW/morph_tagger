@@ -34,5 +34,6 @@
         "Abbr": 5,
         "Voice": 7
     },
-    "PAD_IDX": 0
+    "PAD_IDX": 0,
+    "MASK_IDX": 2
 }
