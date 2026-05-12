@@ -91,6 +91,25 @@ parser.add_argument(
     default=0.15,
     help='Вероятность маскирования токена (0.0 - 1.0). default = 0.15'
 )
+parser.add_argument(
+    '--mask_alpha',
+    type=float,
+    default=0.0,
+    help='Аддитивный приоритет замаскированных токенов: loss = mean(ce * w), где w=1+mask_alpha для маски, w=1 для остальных. 0.0 = без приоритизации. default = 0.0'
+)
+parser.add_argument(
+    '--target_pos_idx',
+    type=int,
+    default=-1,
+    help='Индекс POS для таргетированного маскирования. -1 = случайное маскирование всех токенов (оригинальное поведение). default = -1'
+)
+parser.add_argument(
+    '--use_expand',
+    action='store_true',
+    help='Разворачивать батч: создавать отдельную копию предложения под каждую выбранную маску. По умолчанию выключено.'
+)
+parser.add_argument('--max_masks_per_sentence', type=int, default=None,
+    help='Максимум масок на предложение при таргетированном маскировании. None = без ограничения.')
 
 # Параметры обучения модели
 USE_CLASSES_WEIGHTS = False
@@ -130,12 +149,20 @@ CHECKPOINT_EPOCH = args.checkpoint_epoch
 DEVICE = args.device
 DEVICE = DEVICE if torch.cuda.is_available() else 'cpu'
 MASK_PROB = args.mask_prob
+MASK_ALPHA = args.mask_alpha
+TARGET_POS_IDX = args.target_pos_idx
+USE_EXPAND = args.use_expand
+MAX_MASKS_PER_SENTENCE = args.max_masks_per_sentence
 logging.info(f'''Текущие параметры обработки датасета и конфигурация токенизатора:
              DATASET_TO_PREPARE: {DATASET_TO_PREPARE}
              BATCH_SIZE: {BATCH_SIZE}
              CHECKPOINT_EPOCH: {CHECKPOINT_EPOCH}
              DEVICE: {DEVICE}
              MASK_PROB: {MASK_PROB}
+             MASK_ALPHA: {MASK_ALPHA}
+             TARGET_POS_IDX: {TARGET_POS_IDX} (-1 = все токены случайно)
+             USE_EXPAND: {USE_EXPAND}
+             MAX_MASKS_PER_SENTENCE: {MAX_MASKS_PER_SENTENCE}
              USE_PRETRAINED: {USE_PRETRAINED}''')
 
 def generate_batches(dataset:CustomDataset, batch_size:int, shuffle:bool=True, drop_last:bool=True, device='cpu'):
@@ -177,17 +204,146 @@ def normalize_sizes(predictions:dict[str:torch.tensor], targets:dict[str:torch.t
     
     return predictions, targets
 
-def compute_loss(predictions:dict[str:torch.tensor], targets:dict[str:list[int]], target_names:list[str], pad_idx:int=0):
+def apply_masking(batch_dict, mask_prob, device, pad_idx, mask_idx, target_pos_idx=-1, use_expand=False, max_masks_per_sentence=None):
+    '''Применяет маскирование к батчу.
+
+    target_pos_idx = -1  -> случайное маскирование всех токенов (оригинальное поведение)
+    target_pos_idx >= 0  -> маскируются только слова с указанным upos-индексом
+
+    use_expand = False   -> батч не дублируется, маска применяется напрямую
+    use_expand = True    -> под каждое выбранное слово создаётся отдельная копия предложения
+
+    Возвращает (out_batch_dict, input_ids, letters, word_mask):
+        out_batch_dict — батч с таргетами (может быть развёрнутым при use_expand)
+        input_ids      — [B', S, T] с применёнными масками
+        letters        — [B', S, L] с применёнными масками (или None)
+        word_mask      — [B', S] bool, True для замаскированных слов
+    '''
+    batch_size = batch_dict['input_ids'].shape[0]
+    seq_len = batch_dict['upos'].shape[1]
+
+    if not use_expand:
+        input_ids = batch_dict['input_ids'].clone()
+        letters = batch_dict.get('letters', None)
+        if letters is not None:
+            letters = letters.clone()
+
+        if target_pos_idx == -1:
+            # Случайное маскирование на уровне сабтокенов [B, S, T] — оригинальное поведение
+            prob_matrix = torch.full(input_ids.shape, mask_prob, device=device)
+            prob_matrix.masked_fill_(input_ids == pad_idx, 0.0)
+            mask_3d = torch.bernoulli(prob_matrix).bool()
+        else:
+            # Таргетированное маскирование: сэмплируем на уровне слов [B, S],
+            # затем разворачиваем до [B, S, T] чтобы закрыть все сабтокены слова
+            pos_candidates = (batch_dict['upos'] == target_pos_idx) & (batch_dict['upos'] != pad_idx)
+            prob_matrix_2d = torch.zeros(batch_size, seq_len, device=device)
+            prob_matrix_2d[pos_candidates] = mask_prob
+            word_selected = torch.bernoulli(prob_matrix_2d).bool()  # [B, S]
+            
+            # Ограничение: не более max_masks существительных на предложение
+            if max_masks_per_sentence is not None:
+                for i in range(word_selected.shape[0]):
+                    selected_pos = word_selected[i].nonzero(as_tuple=True)[0]
+                    if len(selected_pos) > max_masks_per_sentence:
+                        keep = selected_pos[torch.randperm(len(selected_pos))[:max_masks_per_sentence]]
+                        word_selected[i] = False
+                        word_selected[i][keep] = True
+
+            mask_3d = word_selected.unsqueeze(-1).expand_as(input_ids).clone()
+            mask_3d &= (input_ids != pad_idx)
+
+        input_ids[mask_3d] = mask_idx
+        if letters is not None:
+            letters[mask_3d] = pad_idx
+
+        # Схлопываем до [B, S]: слово замаскировано если хотя бы один его сабтокен замаскирован
+        word_mask = mask_3d.any(dim=-1)
+        return batch_dict, input_ids, letters, word_mask
+
+    else:
+        # Expand: каждое выбранное слово порождает отдельную копию предложения с одной маской
+        new_batch_dict = {k: [] for k in batch_dict.keys()}
+        new_word_masks = []
+
+        for i in range(batch_size):
+            if target_pos_idx == -1:
+                # Для expand при случайном маскировании сэмплируем на уровне слов
+                valid = (batch_dict['upos'][i] != pad_idx)
+                prob_vec = torch.zeros(seq_len, device=device)
+                prob_vec[valid] = mask_prob
+                selected = torch.bernoulli(prob_vec).bool().nonzero(as_tuple=True)[0]
+            else:
+                candidates = (
+                    (batch_dict['upos'][i] == target_pos_idx) &
+                    (batch_dict['upos'][i] != pad_idx)
+                ).nonzero(as_tuple=True)[0]
+
+                if len(candidates) > 0:
+                    prob_vec = torch.full((len(candidates),), mask_prob, device=device)
+                    sel_mask = torch.bernoulli(prob_vec).bool()
+                    selected = candidates[sel_mask]
+                else:
+                    selected = torch.tensor([], dtype=torch.long, device=device)
+
+            if len(selected) > 0:
+                # Создаем отдельный дубль под каждую выбранную маску
+                for idx in selected:
+                    for k in batch_dict.keys():
+                        new_batch_dict[k].append(batch_dict[k][i])
+                    wm = torch.zeros(seq_len, dtype=torch.bool, device=device)
+                    wm[idx] = True
+                    new_word_masks.append(wm)
+            else:
+                # Если не выпало ни одной маски — добавляем оригинал как чистый контекст
+                for k in batch_dict.keys():
+                    new_batch_dict[k].append(batch_dict[k][i])
+                new_word_masks.append(torch.zeros(seq_len, dtype=torch.bool, device=device))
+
+        for k in new_batch_dict.keys():
+            new_batch_dict[k] = torch.stack(new_batch_dict[k])
+
+        word_mask = torch.stack(new_word_masks)  # [B', S]
+
+        input_ids = new_batch_dict['input_ids'].clone()
+        letters = new_batch_dict.get('letters', None)
+        if letters is not None:
+            letters = letters.clone()
+
+        # word_mask [B', S] — маскируем все сабтокены выбранных слов
+        input_ids[word_mask] = mask_idx
+        if letters is not None:
+            letters[word_mask] = pad_idx
+
+        return new_batch_dict, input_ids, letters, word_mask
+
+def compute_loss(predictions:dict[str:torch.tensor], targets:dict[str:list[int]], target_names:list[str], mask_target:torch.Tensor, mask_alpha:float, pad_idx:int=0):
     predictions, targets = normalize_sizes(predictions, targets, target_names)
+    mask_target_flat = mask_target.contiguous().view(-1)
+
     losses = {}
     total_loss = 0
     for key in target_names:
-        losses[key] = torch.nn.functional.cross_entropy(predictions[key], targets[key], ignore_index=pad_idx)
-        total_loss += losses[key]
+        preds = predictions[key]
+        targs = targets[key]
+
+        # Cross Entropy без редукции для поштучного контроля
+        ce_loss = torch.nn.functional.cross_entropy(preds, targs, ignore_index=pad_idx, reduction='none')
+
+        # Все токены с весом 1.0, замаскированные получают дополнительный буст
+        weights = torch.ones_like(ce_loss)
+        weights[mask_target_flat & (targs != pad_idx)] = 1.0 + mask_alpha
+
+        valid = targs != pad_idx
+        loss_feature = (ce_loss * weights)[valid].mean()
+
+        losses[key] = loss_feature
+        total_loss += loss_feature
 
     return total_loss, losses
 
-def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macro'):
+def compute_metrics(predictions, targets, target_names, mask_target, pad_idx=0, average='macro'):
+    # mask_target всегда [B, S] — word_mask из apply_masking или zero_mask из валидации
     metrics_dict = {}
     first_key = target_names[0]
     batch_size, seq_len = targets[first_key].size()
@@ -217,9 +373,19 @@ def compute_metrics(predictions, targets, target_names, pad_idx=0, average='macr
         precision, recall, f1, _ = precision_recall_fscore_support(target_filtered, pred_filtered, average=average, zero_division=0)
         
         accuracy = (pred_filtered == target_filtered).mean()
+
+        # Точность только на замаскированных токенах
+        m_mask = mask_target & mask
+        if m_mask.any():
+            pred_masked = pred_indices[m_mask].cpu().numpy()
+            target_masked = targets[key][m_mask].cpu().numpy()
+            accuracy_masked = (pred_masked == target_masked).mean()
+        else:
+            accuracy_masked = 0.0
         
         metrics_dict[key] = {
             'accuracy': accuracy,
+            'accuracy_masked': float(accuracy_masked),
             'sentence_accuracy': sentence_accuracy,
             'precision': float(precision),
             'recall': float(recall),
@@ -308,7 +474,7 @@ try:
         batch_generator = generate_batches(dataset, BATCH_SIZE, SHUFFLE, DROP_LAST, DEVICE)
         epoch_sum_train_loss = 0.0
         epoch_running_train_loss = 0.0
-        train_epoch_metrics = {key:{'accuracy' : 0.0, 'sentence_accuracy' : 0.0, 'precision' : 0.0,
+        train_epoch_metrics = {key:{'accuracy' : 0.0, 'accuracy_masked': 0.0, 'sentence_accuracy' : 0.0, 'precision' : 0.0,
                                     'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
         train_epoch_metrics['word_accuracy'] = 0.0
         train_epoch_metrics['sentence_accuracy_global'] = 0.0
@@ -317,23 +483,12 @@ try:
         for batch_idx, batch_dict in enumerate(batch_generator):
 
             optimizer.zero_grad()
-            
-            # Логика маскирования
-            input_ids = batch_dict['input_ids'].clone()
-            letters = batch_dict.get('letters', None)
-            
-            # Маскируем MASK_PROB токенов, игнорируя PAD_IDX
-            prob_matrix = torch.full(input_ids.shape, MASK_PROB, device=DEVICE)
-            prob_matrix.masked_fill_(input_ids == PAD_IDX, 0.0)
-            mask = torch.bernoulli(prob_matrix).bool()
-            
-            input_ids[mask] = MASK_IDX
-            
-            # Если используются буквы, забиваем их нулями для замаскированных слов,
-            # чтобы модель не "подсматривала" в состав слова
-            if letters is not None:
-                letters = letters.clone()
-                letters[mask] = PAD_IDX
+
+            exp_batch_dict, input_ids, letters, word_mask = apply_masking(
+                batch_dict, MASK_PROB, DEVICE, PAD_IDX, MASK_IDX,
+                target_pos_idx=TARGET_POS_IDX, use_expand=USE_EXPAND,
+                max_masks_per_sentence=MAX_MASKS_PER_SENTENCE
+            )
 
             if WORD_REPRESENTATION == 'tokens':
                 predictions = model(tokens=input_ids, letters=None)
@@ -342,8 +497,8 @@ try:
             else:
                 predictions = model(tokens=input_ids, letters=letters)
 
-            cur_metrics = compute_metrics(predictions, batch_dict, target_names, PAD_IDX)
-            total_loss, train_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
+            cur_metrics = compute_metrics(predictions, exp_batch_dict, target_names, word_mask, PAD_IDX)
+            total_loss, train_losses = compute_loss(predictions, exp_batch_dict, target_names, word_mask, MASK_ALPHA, PAD_IDX)
 
             total_loss.backward()
             optimizer.step()
@@ -364,7 +519,7 @@ try:
         batch_generator = generate_batches(dataset, BATCH_SIZE, SHUFFLE, DROP_LAST, DEVICE)
         epoch_sum_valid_loss = 0.0
         epoch_running_valid_loss = 0.0
-        valid_epoch_metrics = {key:{'accuracy' : 0.0, 'sentence_accuracy' : 0.0, 'precision' : 0.0,
+        valid_epoch_metrics = {key:{'accuracy' : 0.0, 'accuracy_masked': 0.0, 'sentence_accuracy' : 0.0, 'precision' : 0.0,
                                     'recall' : 0.0, 'f1' : 0.0, 'mean_loss' : 0.0} for key in target_names}
         valid_epoch_metrics['word_accuracy'] = 0.0
         valid_epoch_metrics['sentence_accuracy_global'] = 0.0
@@ -383,8 +538,15 @@ try:
                 else:
                     predictions = model(tokens=batch_dict['input_ids'], letters=batch_dict['letters'])
 
-                cur_metrics = compute_metrics(predictions, batch_dict, target_names, PAD_IDX)
-                total_loss, valid_losses = compute_loss(predictions, batch_dict, target_names, PAD_IDX)
+                zero_mask = torch.zeros(
+                    batch_dict['input_ids'].shape[0],
+                    batch_dict['upos'].shape[1],
+                    dtype=torch.bool,
+                    device=DEVICE
+                )
+
+                cur_metrics = compute_metrics(predictions, batch_dict, target_names, zero_mask, PAD_IDX)
+                total_loss, valid_losses = compute_loss(predictions, batch_dict, target_names, zero_mask, 0.0, PAD_IDX)
 
                 # Средние потери и точность
                 epoch_running_valid_loss += (total_loss.item() - epoch_running_valid_loss) / (batch_idx + 1)
@@ -414,6 +576,7 @@ try:
             print('-'*20)
             print(f"Train: Ошибка на признаке {key}: {train_epoch_metrics[key]['mean_loss']}")
             print(f"Train: Точность на признаке {key}: {train_epoch_metrics[key]['accuracy']*100}%")
+            print(f"Train: Точность (ТОЛЬКО НА МАСКАХ) на признаке {key}: {train_epoch_metrics[key]['accuracy_masked']*100}%")
             print(f"Train: Точность предложения на признаке {key}: {valid_epoch_metrics[key]['sentence_accuracy']*100}%")
             print(f"Train: precision на признаке {key}: {train_epoch_metrics[key]['precision']*100}%")
             print(f"Train: recall на признаке {key}: {train_epoch_metrics[key]['recall']*100}%")
